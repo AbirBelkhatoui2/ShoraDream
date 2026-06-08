@@ -1,0 +1,175 @@
+/* RESET */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: white;
+  min-height: 100vh;
+  background: #050b2e;
+  overflow-x: hidden;
+}
+
+.home-container,
+.login-page {
+  background: url("/stars-bg.jpg") center/cover no-repeat fixed;
+}
+
+.home-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.home-content {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Sidebar legacy */
+.sidebar {
+  width: 80px;
+  min-height: 100vh;
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(14px);
+  border-right: 1px solid rgba(255,255,255,0.10);
+  display: flex;
+  justify-content: center;
+  padding-top: 36px;
+  position: relative;
+}
+
+.side-icons { display: flex; flex-direction: column; gap: 22px; }
+
+.side-icon {
+  width: 44px; height: 44px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0.6; cursor: pointer; transition: 0.2s;
+  background: rgba(0,0,0,0.15);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.side-icon.active { opacity: 1; }
+
+/* Glow Card */
+.glow-card {
+  width: 420px;
+  max-width: 92%;
+  text-align: center;
+  padding: 44px 34px;
+  border-radius: 26px;
+  background: rgba(10,20,60,0.78);
+  border: 1px solid rgba(255,255,255,0.35);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 40px rgba(255,255,255,0.22);
+  position: relative;
+  z-index: 2;
+}
+
+.glow-card h1 { margin: 0 0 8px; font-size: 28px; font-weight: 700; }
+.subtitle { margin: 0 0 28px; font-size: 13px; letter-spacing: 1px; opacity: 0.75; }
+
+.icon-circle {
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  margin: 0 auto 28px;
+  border: 1px solid rgba(255,255,255,0.35);
+  background: rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; font-size: 28px;
+}
+
+.magic-button {
+  width: 100%;
+  border: none;
+  padding: 15px 20px;
+  border-radius: 999px;
+  font-size: 16px; font-weight: 700;
+  color: white;
+  background: linear-gradient(90deg, #39c6ff, #8b5cf6);
+  cursor: pointer;
+  box-shadow: 0 0 25px rgba(139,92,246,0.65);
+  transition: transform 0.15s ease;
+}
+.magic-button:hover { transform: translateY(-2px); }
+.magic-button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+.fairy-float {
+  position: absolute; right: 8%; top: 20%;
+  width: 240px; z-index: 3;
+  filter: drop-shadow(0 0 30px gold);
+  animation: float 4s ease-in-out infinite;
+}
+
+.fairy-trail {
+  position: absolute; right: 13%; top: 38%;
+  width: 6px; height: 320px; z-index: 2;
+  background: linear-gradient(to bottom, rgba(255,215,0,0.9), rgba(255,215,0,0));
+  filter: blur(3px);
+  animation: sparkle 1.6s infinite ease-in-out;
+}
+
+@keyframes sparkle { 0%,100%{opacity:0.25} 50%{opacity:1} }
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-18px)} }
+
+.login-page {
+  min-height: 100vh;
+  display: flex; justify-content: center; align-items: center;
+  padding: 20px;
+}
+
+/* Forms */
+.form-group { width: 100%; margin-top: 12px; text-align: left; }
+
+.form-group input {
+  width: 100%; padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  color: white; outline: none;
+  font-size: 15px;
+}
+
+.field-error { margin: 6px 0 0; font-size: 12px; opacity: 0.9; color: #ff8080; }
+
+.form-error {
+  margin: 10px 0 6px; padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,80,80,0.14);
+  border: 1px solid rgba(255,80,80,0.25);
+  font-size: 13px;
+}
+
+.lang-btn {
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  color: white; cursor: pointer;
+  transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.lang-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.28);
+}
+
+/* ===== RESPONSIVE MOBILE ===== */
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .fairy-float, .fairy-trail { display: none; }
+
+  .glow-card {
+    width: 100%;
+    max-width: 100%;
+    padding: 28px 20px;
+    border-radius: 20px;
+  }
+
+  .login-page {
+    align-items: flex-start;
+    padding-top: 40px;
+  }
+}

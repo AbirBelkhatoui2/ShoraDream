@@ -1,0 +1,240 @@
+/* src/styles/accueil.css */
+
+.accueil-page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  background: #050b2e;
+  color: #fff;
+  overflow: hidden;
+}
+
+.accueil-stage {
+  flex: 1;
+  min-height: 100vh;
+  padding: 24px 20px 80px;
+  overflow: auto;
+}
+
+.accueil-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.accueil-title { margin: 0; font-size: 26px; font-weight: 900; letter-spacing: .2px; }
+.accueil-sub { margin: 6px 0 0; opacity: .8; font-size: 13px; }
+
+.accueil-badges { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+
+.accueil-pill {
+  padding: 8px 12px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+  font-weight: 800; font-size: 12px;
+}
+
+.accueil-error {
+  padding: 12px 14px; border-radius: 14px;
+  border: 1px solid rgba(255,80,80,0.35);
+  background: rgba(255,80,80,0.10);
+  margin-bottom: 14px;
+}
+
+.accueil-panel {
+  padding: 14px 16px; border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+}
+
+.accueil-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 1100px) {
+  .accueil-grid { grid-template-columns: 1fr 1fr; }
+  .accueil-grid > section:last-child { grid-column: 1 / -1; }
+}
+
+.accueil-card {
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(10,25,70,0.45);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 70px rgba(0,0,0,0.28);
+  padding: 14px;
+}
+
+.accueil-card-head {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+
+.accueil-card-title { font-weight: 900; letter-spacing: .2px; }
+
+.accueil-card-count {
+  min-width: 34px; height: 28px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  font-weight: 900;
+}
+
+.accueil-empty { opacity: .8; padding: 8px 2px; font-size: 13px; }
+.accueil-list { display: grid; gap: 12px; }
+
+/* Publication item */
+.pub-item {
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.04);
+  padding: 12px;
+}
+
+.pub-top {
+  display: flex; align-items: center;
+  justify-content: space-between; gap: 12px;
+}
+
+.pub-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.pub-avatar {
+  width: 42px; height: 42px;
+  border-radius: 999px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+}
+.pub-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.pub-user-meta { min-width: 0; }
+.pub-name {
+  font-weight: 900; font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.pub-mini {
+  margin-top: 3px;
+  display: flex; align-items: center; gap: 8px;
+  opacity: .82; font-size: 12px; flex-wrap: wrap;
+}
+
+.dot {
+  width: 4px; height: 4px; border-radius: 999px;
+  background: rgba(255,255,255,0.5); display: inline-block;
+}
+
+.pub-status {
+  padding: 6px 10px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(80,180,255,0.10);
+  font-weight: 900; font-size: 11px; letter-spacing: .3px;
+}
+
+.pub-title { margin-top: 10px; font-weight: 900; }
+.pub-gallery { margin-top: 10px; border-radius: 14px; overflow: hidden; }
+
+.pub-footer { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+.pub-chip {
+  padding: 7px 10px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+  font-weight: 800; font-size: 12px;
+}
+
+/* Filter bar */
+.filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px; }
+
+.filter-btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  height: 38px; padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.92);
+  font-weight: 900; cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.filter-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(170,120,255,0.45);
+}
+.filter-btn:active { transform: scale(0.98); }
+.filter-btn--active {
+  background: linear-gradient(90deg, rgba(80,180,255,0.95), rgba(150,90,255,0.95));
+  border-color: transparent; color: #fff;
+  box-shadow: 0 0 26px rgba(138,92,246,0.35);
+}
+
+.filter-count {
+  min-width: 26px; height: 22px; padding: 0 8px;
+  border-radius: 999px;
+  display: inline-grid; place-items: center;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(0,0,0,0.18);
+  font-size: 12px; font-weight: 900;
+}
+.filter-btn--active .filter-count {
+  background: rgba(255,255,255,0.18);
+  border-color: transparent;
+}
+
+.pub-fav {
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.92);
+  padding: 8px 12px; border-radius: 999px;
+  cursor: pointer; font-weight: 800;
+  display: inline-flex; gap: 8px; align-items: center;
+}
+.pub-fav:hover { background: rgba(255,255,255,0.10); }
+.pub-fav--on {
+  background: linear-gradient(90deg, rgba(80,180,255,0.95), rgba(150,90,255,0.95));
+  border-color: transparent; color: #fff;
+}
+
+/* ===== RESPONSIVE MOBILE ===== */
+@media (max-width: 768px) {
+  .accueil-stage {
+    padding: 16px 12px 80px;
+  }
+
+  .accueil-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .accueil-title { font-size: 22px; }
+  .accueil-badges { justify-content: flex-start; }
+
+  .filter-bar { gap: 8px; }
+  .filter-btn { height: 34px; padding: 0 10px; font-size: 12px; gap: 6px; }
+
+  .pub-top { gap: 8px; }
+  .pub-avatar { width: 36px; height: 36px; }
+  .pub-name { font-size: 12px; }
+  .pub-mini { font-size: 11px; }
+
+  .pub-footer { gap: 6px; }
+  .pub-chip { padding: 5px 8px; font-size: 11px; }
+
+  .accueil-card { padding: 12px; border-radius: 16px; }
+  .pub-item { padding: 10px; border-radius: 14px; }
+}
+
+@media (max-width: 400px) {
+  .accueil-title { font-size: 18px; }
+  .filter-btn { height: 30px; padding: 0 8px; font-size: 11px; }
+  .pub-avatar { width: 32px; height: 32px; }
+}

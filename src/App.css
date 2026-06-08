@@ -1,0 +1,231 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Vite default demo styles (tu peux supprimer si tu veux) */
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+@keyframes logo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+.card { padding: 2em; }
+.read-the-docs { color: #888; }
+
+/* =========================
+   MODAL
+   ========================= */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 18px; /* évite que la modal colle aux bords sur mobile */
+}
+
+.modal-card {
+  width: min(720px, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(10, 25, 70, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 80px rgba(0, 0, 0, 0.45);
+}
+
+/* =========================
+   DROP ZONE (upload)
+   ========================= */
+.drop-zone {
+  border: 2px dashed rgba(255, 255, 255, 0.35);
+  padding: 20px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  border-radius: 12px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.drop-zone:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* =========================
+   PREVIEW GRID (upload preview)
+   ========================= */
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.preview-item {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.preview-item img {
+  width: 100%;
+  height: 120px;              /* évite les images trop petites */
+  object-fit: cover;
+  display: block;
+}
+
+/* bouton X */
+.remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: rgba(220, 38, 38, 0.95);
+  color: #fff;
+  font-weight: 800;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.remove-btn:hover {
+  filter: brightness(1.05);
+  transform: scale(1.03);
+}
+
+/* =========================
+   GALLERY (affichage 1..4)
+   ========================= */
+.gallery img {
+  width: 100%;
+  height: 220px; /* ajuste si tu veux plus grand/petit */
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+  cursor: pointer;
+}
+
+/* 1 image */
+.gallery-1 {
+  display: block;
+}
+
+/* 2 images */
+.gallery-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+/* 3 images: 1 grande à gauche + 2 petites à droite */
+.gallery-3 {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 8px;
+}
+
+.gallery-3 img:nth-child(1) {
+  height: 448px;     /* 2x 220 + gap ~8 => cohérent visuellement */
+  grid-row: span 2;
+}
+
+/* 4 images: grille 2x2 */
+.gallery-4 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+/* =========================
+   LIGHTBOX (zoom image)
+   ========================= */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 18px;
+}
+
+.lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 14px;
+  object-fit: contain;
+}
+.drop-zone--active {
+  border-style: solid;
+  border-radius: 28px;
+  transform: scale(1.01);
+  background: rgba(255, 255, 255, 0.06);
+}
+/* change de forme quand on clique */
+.drop-zone--active {
+  border-style: solid;
+  border-radius: 28px;
+  transform: scale(1.01);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* effet quand on drag des fichiers dessus */
+.drop-zone--drag {
+  border-style: dashed;
+  border-radius: 24px;
+  transform: scale(1.02);
+}
+
+/* texte */
+.drop-text {
+  display: inline-block;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+/* animation au clic */
+.drop-text--pulse {
+  animation: dropTextPulse 0.5s ease;
+}
+
+@keyframes dropTextPulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  40% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
