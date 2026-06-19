@@ -1,5 +1,5 @@
 // src/api.js
-const API_BASE = "http://127.0.0.1:3001";
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:3001";
 
 function stripHtml(text) {
   if (!text) return "";
@@ -38,11 +38,6 @@ export async function apiGet(path, token) {
   return data;
 }
 
-/**
- * apiSend supporte:
- * - JSON (objet)
- * - FormData (upload images/files)
- */
 export async function apiSend(path, method, token, body) {
   const isForm = body instanceof FormData;
 
@@ -70,6 +65,7 @@ export async function toggleFavorite(token, targetType, targetId) {
 export async function getMyFavorites(token) {
   return apiGet("/favorites/mine", token);
 }
+
 // 📰 FEED
 export async function getFeed(token, limit = 20) {
   return apiGet(`/feed?limit=${limit}`, token);

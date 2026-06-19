@@ -1,7 +1,10 @@
-// server.cjs (COMPLET)
+// server.cjs (C SÉCURISÉ)
+
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
@@ -11,35 +14,44 @@ const fs = require("fs");
 const nodemailer = require("nodemailer");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
-// ✅ static uploads
+// ─── Sécurité en-têtes HTTP ───
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// ─── CORS sécurisé ───
+app.use(cors({
+  origin: process.env.CLIENT_URL || "http://localhost:5173",
+  credentials: true,
+}));
+
+app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-const PORT = 3001;
-const SECRET = "SECRET_KEY_TEST";
+const PORT = process.env.PORT || 3001;
+const SECRET = process.env.JWT_SECRET || "SECRET_KEY_TEST";
 
 //////////////////////////////////////////////////////
 // MongoDB
 //////////////////////////////////////////////////////
 mongoose
-  .connect("mongodb+srv://Test:1234@cluster0.lwaikno.mongodb.net/shoradream?appName=Cluster0")
+  .connect(process.env.MONGODB_URI)
   .then(() => console.log("✅ MongoDB connecté"))
   .catch((err) => console.error("❌ MongoDB erreur:", err));
 
 //////////////////////////////////////////////////////
-// Nodemailer — configure ton email ici
+// Nodemailer
 //////////////////////////////////////////////////////
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "TONMAIL@gmail.com",      // ← remplace par ton email Gmail
-    pass: "TON_MOT_DE_PASSE_APP",   // ← mot de passe d'application Google (16 car.)
+    user: process.env.MAIL_USER,
+    pass: process.env.MAIL_PASS,
   },
 });
 
-// Map en mémoire : email -> { code, expiresAt }
 const resetCodes = new Map();
 
 //////////////////////////////////////////////////////
@@ -61,10 +73,12 @@ const imageStorage = multer.diskStorage({
 
 const uploadImage = multer({
   storage: imageStorage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = /^image\//.test(file.mimetype);
-    cb(ok ? null : new Error("Fichier image invalide"), ok);
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowed.includes(file.mimetype))
+      return cb(new Error("Format non autorisé. Seuls JPEG, PNG et WEBP sont acceptés."), false);
+    cb(null, true);
   },
 });
 
@@ -74,7 +88,7 @@ const uploadImage = multer({
 
 const userSchema = new mongoose.Schema(
   {
-    firstName: { type: String, default: "", trim: true },           // ✅ NOUVEAU
+    firstName: { type: String, default: "", trim: true },
     name: { type: String, required: true, unique: true, trim: true, minlength: 2, maxlength: 40 },
     email: { type: String, unique: true, required: true, trim: true, lowercase: true },
     phone: { type: String, default: "", trim: true, maxlength: 30 },
@@ -171,7 +185,6 @@ const favoriteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Index performance
 offerSchema.index({ besoinId: 1, author: 1 });
 messageSchema.index({ besoinId: 1, offerId: 1, createdAt: 1 });
 besoinSchema.index({ owner: 1, createdAt: -1 });
@@ -199,21 +212,41 @@ function auth(req, res, next) {
     req.user = payload;
     next();
   } catch {
-    return res.status(401).json({ message: "Token invalide" });
+    return res.status(401).json({ message: "Token invalide ou expiré" });
   }
 }
+
+//////////////////////////////////////////////////////
+// Rate limiting maison
+//////////////////////////////////////////////////////
+const RL = new Map();
+function rateLimit({ windowMs = 10_000, max = 12 } = {}) {
+  return (req, res, next) => {
+    const key = `${req.user?.id || req.ip}:${req.path}`;
+    const now = Date.now();
+    const cur = RL.get(key) || { count: 0, ts: now };
+    if (now - cur.ts > windowMs) { cur.count = 0; cur.ts = now; }
+    cur.count++;
+    RL.set(key, cur);
+    if (cur.count > max) return res.status(429).json({ message: "Trop de requêtes. Réessaie." });
+    next();
+  };
+}
+
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
 
 //////////////////////////////////////////////////////
 // Helpers
 //////////////////////////////////////////////////////
 function isObjectIdLike(v) {
-  return typeof v === "string" && v.match(/^[0-9a-fA-F]{24}$/);
+  return typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v);
 }
 
 function safeUnlinkUpload(publicPath) {
   if (!publicPath || typeof publicPath !== "string") return;
-  if (!publicPath.startsWith("/uploads/")) return;
-  const rel = publicPath.replace("/uploads/", "");
+  const cleanPath = publicPath.split("?")[0];
+  if (!cleanPath.startsWith("/uploads/")) return;
+  const rel = cleanPath.replace("/uploads/", "");
   const full = path.join(__dirname, "uploads", rel);
   fs.unlink(full, () => {});
 }
@@ -233,20 +266,6 @@ function parseKeepImages(v) {
 function sanitizeText(v, max = 200000) {
   const s = String(v ?? "").replace(/\0/g, "").trim();
   return s.length > max ? s.slice(0, max) : s;
-}
-
-const RL = new Map();
-function rateLimit({ windowMs = 10_000, max = 12 } = {}) {
-  return (req, res, next) => {
-    const key = `${req.user?.id || "anon"}:${req.path}`;
-    const now = Date.now();
-    const cur = RL.get(key) || { count: 0, ts: now };
-    if (now - cur.ts > windowMs) { cur.count = 0; cur.ts = now; }
-    cur.count++;
-    RL.set(key, cur);
-    if (cur.count > max) return res.status(429).json({ message: "Trop de requêtes. Réessaie." });
-    next();
-  };
 }
 
 async function canAccessBesoin(reqUserId, besoinId) {
@@ -290,18 +309,20 @@ app.get("/users/public/:id", async (req, res) => {
 });
 
 //////////////////// REGISTER ////////////////////
-app.post("/register", async (req, res) => {
+app.post("/register", loginLimiter, async (req, res) => {
   try {
-    const firstName = String(req.body?.firstName || "").trim();  // ✅ NOUVEAU
-    const name = String(req.body?.name || "").trim();
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    const firstName = sanitizeText(req.body?.firstName || "");
+    const name = sanitizeText(req.body?.name || "");
+    const email = sanitizeText(req.body?.email || "").toLowerCase();
     const password = String(req.body?.password || "");
-    const phone = String(req.body?.phone || "").trim();
-    const location = String(req.body?.location || "").trim();
+    const phone = sanitizeText(req.body?.phone || "");
+    const location = sanitizeText(req.body?.location || "");
 
-    if (!name || !email || !password) {
+    if (!name || !email || !password)
       return res.status(400).json({ message: "Champs manquants" });
-    }
+
+    if (password.length < 6)
+      return res.status(400).json({ message: "Mot de passe trop court (minimum 6 caractères)" });
 
     const existingEmail = await User.findOne({ email }).lean();
     if (existingEmail) return res.status(400).json({ message: "Email déjà utilisé" });
@@ -312,11 +333,7 @@ app.post("/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await User.create({
-      firstName,
-      name,
-      email,
-      phone,
-      location,
+      firstName, name, email, phone, location,
       password: hashedPassword,
       topSkills: [],
       summary: "",
@@ -343,20 +360,21 @@ app.post("/register", async (req, res) => {
 });
 
 //////////////////// LOGIN ////////////////////
-app.post("/login", async (req, res) => {
+app.post("/login", loginLimiter, async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    const email = sanitizeText(req.body?.email || "").toLowerCase();
     const password = String(req.body?.password || "");
 
-    if (!email || !password) return res.status(400).json({ message: "Champs manquants" });
+    if (!email || !password)
+      return res.status(400).json({ message: "Champs manquants" });
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ message: "Email incorrect" });
+    if (!user) return res.status(401).json({ message: "Identifiants incorrects" });
 
     const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ message: "Mot de passe incorrect" });
+    if (!ok) return res.status(401).json({ message: "Identifiants incorrects" });
 
-    const token = jwt.sign({ id: user._id, name: user.name }, SECRET, { expiresIn: "2h" });
+    const token = jwt.sign({ id: user._id, name: user.name }, SECRET, { expiresIn: "7d" });
 
     res.json({
       token,
@@ -379,43 +397,30 @@ app.post("/login", async (req, res) => {
 });
 
 //////////////////// MOT DE PASSE OUBLIÉ ////////////////////
-
-// Étape 1 : envoyer le code par email
-app.post("/forgot-password", async (req, res) => {
+app.post("/forgot-password", loginLimiter, async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    const email = sanitizeText(req.body?.email || "").toLowerCase();
     if (!email) return res.status(400).json({ message: "Email requis" });
 
     const user = await User.findOne({ email }).lean();
-    // Sécurité : on répond toujours OK même si l'email n'existe pas
     if (!user) return res.json({ message: "Si cet email existe, un code a été envoyé." });
 
-    // Générer un code à 6 chiffres
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-
+    const expiresAt = Date.now() + 10 * 60 * 1000;
     resetCodes.set(email, { code, expiresAt });
 
-    // Envoyer l'email
     await transporter.sendMail({
-      from: '"ShoraDream ✨" <TONMAIL@gmail.com>',  // ← remplace
+      from: `"ShoraDream" <${process.env.MAIL_USER}>`,
       to: email,
       subject: "Ton code de réinitialisation ShoraDream",
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: auto; padding: 24px;">
-          <h2 style="color: #8B5CF6;">✨ ShoraDream</h2>
+          <h2 style="color: #8B5CF6;">ShoraDream</h2>
           <p>Voici ton code de réinitialisation :</p>
-          <div style="
-            font-size: 36px;
-            font-weight: bold;
-            letter-spacing: 8px;
-            text-align: center;
-            padding: 20px;
-            background: #f5f5ff;
-            border-radius: 12px;
-            color: #050B2E;
-            margin: 20px 0;
-          ">${code}</div>
+          <div style="font-size: 36px; font-weight: bold; letter-spacing: 8px; text-align: center;
+            padding: 20px; background: #f5f5ff; border-radius: 12px; color: #050B2E; margin: 20px 0;">
+            ${code}
+          </div>
           <p style="color: #666; font-size: 13px;">
             Ce code expire dans <strong>10 minutes</strong>.<br/>
             Si tu n'as pas demandé de réinitialisation, ignore cet email.
@@ -431,31 +436,29 @@ app.post("/forgot-password", async (req, res) => {
   }
 });
 
-// Étape 2 : vérifier le code + nouveau mot de passe
 app.post("/reset-password", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const code = String(req.body?.code || "").trim();
+    const email = sanitizeText(req.body?.email || "").toLowerCase();
+    const code = sanitizeText(req.body?.code || "");
     const newPassword = String(req.body?.newPassword || "");
 
-    if (!email || !code || !newPassword) {
+    if (!email || !code || !newPassword)
       return res.status(400).json({ message: "Champs manquants" });
-    }
-    if (newPassword.length < 6) {
+
+    if (newPassword.length < 6)
       return res.status(400).json({ message: "Minimum 6 caractères" });
-    }
 
     const stored = resetCodes.get(email);
-    if (!stored) {
+    if (!stored)
       return res.status(400).json({ message: "Aucun code demandé pour cet email" });
-    }
+
     if (Date.now() > stored.expiresAt) {
       resetCodes.delete(email);
       return res.status(400).json({ message: "Code expiré. Fais une nouvelle demande." });
     }
-    if (stored.code !== code) {
+
+    if (stored.code !== code)
       return res.status(400).json({ message: "Code incorrect" });
-    }
 
     const hashed = await bcrypt.hash(newPassword, 10);
     await User.updateOne({ email }, { $set: { password: hashed } });
@@ -471,17 +474,17 @@ app.post("/reset-password", async (req, res) => {
 //////////////////// UPDATE PROFILE ////////////////////
 app.put("/users/me", auth, async (req, res) => {
   try {
-    const firstName = String(req.body?.firstName || "").trim(); // ✅ NOUVEAU
-    const name = String(req.body?.name || "").trim();
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const phone = String(req.body?.phone || "").trim();
-    const location = String(req.body?.location || "").trim();
-    const summary = String(req.body?.summary || "").trim();
+    const firstName = sanitizeText(req.body?.firstName || "");
+    const name = sanitizeText(req.body?.name || "");
+    const email = sanitizeText(req.body?.email || "").toLowerCase();
+    const phone = sanitizeText(req.body?.phone || "");
+    const location = sanitizeText(req.body?.location || "");
+    const summary = sanitizeText(req.body?.summary || "");
     const topSkillsRaw = req.body?.topSkills;
 
     let topSkills = [];
     if (Array.isArray(topSkillsRaw)) {
-      topSkills = topSkillsRaw.map((x) => String(x || "").trim()).filter(Boolean);
+      topSkills = topSkillsRaw.map((x) => sanitizeText(x)).filter(Boolean);
     } else if (typeof topSkillsRaw === "string") {
       topSkills = topSkillsRaw.split(",").map((x) => x.trim()).filter(Boolean);
     }
@@ -506,7 +509,6 @@ app.put("/users/me", auth, async (req, res) => {
     u.location = location;
     u.topSkills = topSkills;
     u.summary = summary;
-
     await u.save();
 
     res.json({
@@ -533,6 +535,7 @@ app.post("/users/avatar", auth, uploadImage.single("avatar"), async (req, res) =
     if (!req.file) return res.status(400).json({ message: "Image manquante" });
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "Utilisateur introuvable" });
+    if (user.avatar) safeUnlinkUpload(user.avatar);
     user.avatar = "/uploads/images/" + req.file.filename;
     await user.save();
     res.json({ avatar: user.avatar });
@@ -563,13 +566,12 @@ app.get("/stars", auth, async (req, res) => {
 
 app.post("/stars", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
-    const title = sanitizeText(req.body?.title, 200000);
+    const title = sanitizeText(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
     const images = (req.files || []).map((f) => "/uploads/images/" + f.filename).slice(0, 4);
     const created = await Star.create({ owner: req.user.id, title, images });
     res.status(201).json({ item: created });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -606,17 +608,20 @@ app.get("/annonces", auth, async (req, res) => {
 
 app.post("/annonces", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
-    const title = sanitizeText(req.body?.title, 200000);
+    const title = sanitizeText(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const description = sanitizeText(req.body?.description, 200000);
-    const location = sanitizeText(req.body?.location, 200000);
-    const stars = Number(req.body?.stars || 0);
-    const status = String(req.body?.status || "active");
     const images = (req.files || []).map((f) => "/uploads/images/" + f.filename).slice(0, 4);
-    const created = await Annonce.create({ owner: req.user.id, title, description, location, stars, status, images });
+    const created = await Annonce.create({
+      owner: req.user.id,
+      title,
+      description: sanitizeText(req.body?.description),
+      location: sanitizeText(req.body?.location),
+      stars: Number(req.body?.stars || 0),
+      status: String(req.body?.status || "active"),
+      images,
+    });
     res.status(201).json({ item: created });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -630,19 +635,16 @@ app.put("/annonces/:id", auth, uploadImage.array("images", 4), async (req, res) 
     if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
     const keepImages = parseKeepImages(req.body?.keepImages);
     const newImages = (req.files || []).map((f) => "/uploads/images/" + f.filename);
-    const toDelete = (item.images || []).filter((img) => !keepImages.includes(img));
-    toDelete.forEach(safeUnlinkUpload);
-    const merged = [...keepImages, ...newImages].slice(0, 4);
-    if (req.body?.title != null) item.title = sanitizeText(req.body.title, 200000) || item.title;
-    if (req.body?.description != null) item.description = sanitizeText(req.body.description, 200000);
-    if (req.body?.location != null) item.location = sanitizeText(req.body.location, 200000);
-    if (req.body?.stars != null) item.stars = Number(req.body.stars || item.stars);
+    (item.images || []).filter((img) => !keepImages.includes(img)).forEach(safeUnlinkUpload);
+    item.images = [...keepImages, ...newImages].slice(0, 4);
+    if (req.body?.title != null) item.title = sanitizeText(req.body.title) || item.title;
+    if (req.body?.description != null) item.description = sanitizeText(req.body.description);
+    if (req.body?.location != null) item.location = sanitizeText(req.body.location);
+    if (req.body?.stars != null) item.stars = Number(req.body.stars);
     if (req.body?.status != null) item.status = String(req.body.status);
-    item.images = merged;
     await item.save();
     res.json({ item });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -698,21 +700,20 @@ app.get("/besoins", auth, async (req, res) => {
 
 app.post("/besoins", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
-    const title = sanitizeText(req.body?.title, 200000);
+    const title = sanitizeText(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
     const created = await Besoin.create({
       owner: req.user.id,
       title,
-      description: sanitizeText(req.body?.description, 200000),
-      category: sanitizeText(req.body?.category || "general", 200000),
-      location: sanitizeText(req.body?.location, 200000),
+      description: sanitizeText(req.body?.description),
+      category: sanitizeText(req.body?.category || "general"),
+      location: sanitizeText(req.body?.location),
       priority: String(req.body?.priority || "medium"),
       status: String(req.body?.status || "open"),
       images: (req.files || []).map((f) => "/uploads/images/" + f.filename).slice(0, 4),
     });
     res.status(201).json({ item: created });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -726,20 +727,17 @@ app.put("/besoins/:id", auth, uploadImage.array("images", 4), async (req, res) =
     if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
     const keepImages = parseKeepImages(req.body?.keepImages);
     const newImages = (req.files || []).map((f) => "/uploads/images/" + f.filename);
-    const toDelete = (item.images || []).filter((img) => !keepImages.includes(img));
-    toDelete.forEach(safeUnlinkUpload);
-    const merged = [...keepImages, ...newImages].slice(0, 4);
-    if (req.body?.title != null) item.title = sanitizeText(req.body.title, 200000) || item.title;
-    if (req.body?.description != null) item.description = sanitizeText(req.body.description, 200000);
-    if (req.body?.category != null) item.category = sanitizeText(req.body.category, 200000);
-    if (req.body?.location != null) item.location = sanitizeText(req.body.location, 200000);
+    (item.images || []).filter((img) => !keepImages.includes(img)).forEach(safeUnlinkUpload);
+    item.images = [...keepImages, ...newImages].slice(0, 4);
+    if (req.body?.title != null) item.title = sanitizeText(req.body.title) || item.title;
+    if (req.body?.description != null) item.description = sanitizeText(req.body.description);
+    if (req.body?.category != null) item.category = sanitizeText(req.body.category);
+    if (req.body?.location != null) item.location = sanitizeText(req.body.location);
     if (req.body?.priority != null) item.priority = String(req.body.priority);
     if (req.body?.status != null) item.status = String(req.body.status);
-    item.images = merged;
     await item.save();
     res.json({ item });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -795,26 +793,21 @@ app.post("/besoins/:id/offers", auth, uploadImage.single("image"), async (req, r
   try {
     const besoinId = req.params.id;
     if (!isObjectIdLike(besoinId)) return res.status(400).json({ message: "ID invalide" });
-    const message = sanitizeText(req.body?.message, 200000);
+    const message = sanitizeText(req.body?.message);
     if (!message) return res.status(400).json({ message: "Message requis" });
     const besoin = await Besoin.findById(besoinId).lean();
     if (!besoin) return res.status(404).json({ message: "Besoin introuvable" });
     if (besoin.status !== "open") return res.status(400).json({ message: "Besoin non ouvert" });
-    if (String(besoin.owner) === String(req.user.id)) {
+    if (String(besoin.owner) === String(req.user.id))
       return res.status(400).json({ message: "Tu ne peux pas proposer sur ton propre besoin." });
-    }
     const image = req.file ? "/uploads/images/" + req.file.filename : "";
     const item = await Offer.create({
-      besoinId,
-      author: req.user.id,
+      besoinId, author: req.user.id,
       authorName: req.user?.name || "Utilisateur",
-      message,
-      image,
-      accepted: false,
+      message, image, accepted: false,
     });
     res.status(201).json({ item });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -847,9 +840,8 @@ app.post("/offers/:offerId/accept", auth, async (req, res) => {
     if (!offer) return res.status(404).json({ message: "Offre introuvable" });
     const besoin = await Besoin.findById(offer.besoinId);
     if (!besoin) return res.status(404).json({ message: "Besoin introuvable" });
-    if (String(besoin.owner) !== String(req.user.id)) {
-      return res.status(403).json({ message: "Seul le propriétaire du besoin peut accepter." });
-    }
+    if (String(besoin.owner) !== String(req.user.id))
+      return res.status(403).json({ message: "Seul le propriétaire peut accepter." });
     if (besoin.status !== "open") return res.status(400).json({ message: "Besoin non ouvert." });
     await Offer.updateMany({ besoinId: besoin._id }, { $set: { accepted: false } });
     await Offer.updateOne({ _id: offerId }, { $set: { accepted: true } });
@@ -900,7 +892,8 @@ app.get("/chat/:besoinId/messages", auth, rateLimit({ windowMs: 10_000, max: 20 
     const q = { besoinId };
     if (offerId && isObjectIdLike(offerId)) {
       const offer = await Offer.findById(offerId).lean();
-      if (!offer || String(offer.besoinId) !== String(besoinId)) return res.status(404).json({ message: "Offre introuvable" });
+      if (!offer || String(offer.besoinId) !== String(besoinId))
+        return res.status(404).json({ message: "Offre introuvable" });
       const isOwner = String(access.besoin.owner) === String(req.user.id);
       const isOfferAuthor = String(offer.author) === String(req.user.id);
       if (!isOwner && !isOfferAuthor) return res.status(403).json({ message: "Accès refusé" });
@@ -919,13 +912,14 @@ app.post("/chat/:besoinId/messages", auth, rateLimit({ windowMs: 10_000, max: 12
     if (!isObjectIdLike(besoinId)) return res.status(400).json({ message: "ID invalide" });
     const access = await canAccessBesoin(req.user.id, besoinId);
     if (!access.ok) return res.status(403).json({ message: access.reason });
-    const text = sanitizeText(req.body?.text, 200000);
+    const text = sanitizeText(req.body?.text);
     if (!text) return res.status(400).json({ message: "Message requis" });
     const offerIdRaw = req.body?.offerId;
     let offerId = null;
     if (isObjectIdLike(offerIdRaw)) {
       const offer = await Offer.findById(offerIdRaw).lean();
-      if (!offer || String(offer.besoinId) !== String(besoinId)) return res.status(404).json({ message: "Offre introuvable" });
+      if (!offer || String(offer.besoinId) !== String(besoinId))
+        return res.status(404).json({ message: "Offre introuvable" });
       const isOwner = String(access.besoin.owner) === String(req.user.id);
       const isOfferAuthor = String(offer.author) === String(req.user.id);
       if (!isOwner && !isOfferAuthor) return res.status(403).json({ message: "Accès refusé" });
@@ -972,10 +966,12 @@ app.get("/favorites/mine", auth, async (req, res) => {
 
 app.post("/favorites/toggle", auth, async (req, res) => {
   try {
-    const targetType = String(req.body?.targetType || "").trim();
-    const targetId = String(req.body?.targetId || "").trim();
-    if (!["besoin", "annonce", "star"].includes(targetType)) return res.status(400).json({ message: "Type invalide" });
-    if (!isObjectIdLike(targetId)) return res.status(400).json({ message: "ID invalide" });
+    const targetType = sanitizeText(req.body?.targetType || "");
+    const targetId = sanitizeText(req.body?.targetId || "");
+    if (!["besoin", "annonce", "star"].includes(targetType))
+      return res.status(400).json({ message: "Type invalide" });
+    if (!isObjectIdLike(targetId))
+      return res.status(400).json({ message: "ID invalide" });
     const exists =
       targetType === "besoin" ? await Besoin.exists({ _id: targetId }) :
       targetType === "annonce" ? await Annonce.exists({ _id: targetId }) :
@@ -990,7 +986,8 @@ app.post("/favorites/toggle", auth, async (req, res) => {
     await Favorite.create(q);
     res.json({ ok: true, favorited: true });
   } catch (e) {
-    if (String(e?.message || "").includes("E11000")) return res.json({ ok: true, favorited: true });
+    if (String(e?.message || "").includes("E11000"))
+      return res.json({ ok: true, favorited: true });
     res.status(500).json({ message: e?.message || "Erreur serveur" });
   }
 });
@@ -998,6 +995,122 @@ app.post("/favorites/toggle", auth, async (req, res) => {
 //////////////////////////////////////////////////////
 // START
 //////////////////////////////////////////////////////
+// ============================================================
+// AJOUTE CE BLOC dans server.cjs
+// Après la section FAVORITES et avant app.listen(...)
+// ============================================================
+
+//////////////////////////////////////////////////////
+// NOTIFICATIONS — Modèle
+//////////////////////////////////////////////////////
+const notificationSchema = new mongoose.Schema(
+  {
+    to: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    from: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    fromName: { type: String, default: "Utilisateur" },
+    type: { type: String, enum: ["offer", "like", "accepted", "message"], required: true },
+    targetId: { type: mongoose.Schema.Types.ObjectId, default: null },
+    targetTitle: { type: String, default: "" },
+    message: { type: String, default: "" },
+    read: { type: Boolean, default: false, index: true },
+  },
+  { timestamps: true }
+);
+
+notificationSchema.index({ to: 1, createdAt: -1 });
+const Notification = mongoose.model("Notification", notificationSchema);
+
+//////////////////////////////////////////////////////
+// NOTIFICATIONS — Routes
+//////////////////////////////////////////////////////
+
+// GET /notifications/mine — mes notifications
+app.get("/notifications/mine", auth, async (req, res) => {
+  try {
+    const items = await Notification.find({ to: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ message: e?.message || "Erreur serveur" });
+  }
+});
+
+// GET /notifications/unread-count — nombre de notifs non lues
+app.get("/notifications/unread-count", auth, async (req, res) => {
+  try {
+    const count = await Notification.countDocuments({ to: req.user.id, read: false });
+    res.json({ count });
+  } catch (e) {
+    res.status(500).json({ message: e?.message || "Erreur serveur" });
+  }
+});
+
+// PUT /notifications/:id/read — marquer une notif comme lue
+app.put("/notifications/:id/read", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!isObjectIdLike(id)) return res.status(400).json({ message: "ID invalide" });
+    await Notification.updateOne({ _id: id, to: req.user.id }, { $set: { read: true } });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ message: e?.message || "Erreur serveur" });
+  }
+});
+
+// PUT /notifications/read-all — tout marquer comme lu
+app.put("/notifications/read-all", auth, async (req, res) => {
+  try {
+    await Notification.updateMany({ to: req.user.id, read: false }, { $set: { read: true } });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ message: e?.message || "Erreur serveur" });
+  }
+});
+
+//////////////////////////////////////////////////////
+// MODIFIER la route POST /besoins/:id/offers
+// Pour créer une notification automatiquement
+// Remplace l'ancienne version par celle-ci :
+//////////////////////////////////////////////////////
+/*
+app.post("/besoins/:id/offers", auth, uploadImage.single("image"), async (req, res) => {
+  try {
+    const besoinId = req.params.id;
+    if (!isObjectIdLike(besoinId)) return res.status(400).json({ message: "ID invalide" });
+    const message = sanitizeText(req.body?.message);
+    if (!message) return res.status(400).json({ message: "Message requis" });
+    const besoin = await Besoin.findById(besoinId).lean();
+    if (!besoin) return res.status(404).json({ message: "Besoin introuvable" });
+    if (besoin.status !== "open") return res.status(400).json({ message: "Besoin non ouvert" });
+    if (String(besoin.owner) === String(req.user.id))
+      return res.status(400).json({ message: "Tu ne peux pas proposer sur ton propre besoin." });
+    const image = req.file ? "/uploads/images/" + req.file.filename : "";
+    const item = await Offer.create({
+      besoinId, author: req.user.id,
+      authorName: req.user?.name || "Utilisateur",
+      message, image, accepted: false,
+    });
+
+    // ✅ Créer une notification pour le propriétaire du besoin
+    await Notification.create({
+      to: besoin.owner,
+      from: req.user.id,
+      fromName: req.user?.name || "Utilisateur",
+      type: "offer",
+      targetId: besoin._id,
+      targetTitle: besoin.title,
+      message: `${req.user?.name || "Quelqu'un"} a proposé son aide sur votre besoin`,
+    });
+
+    res.status(201).json({ item });
+  } catch (e) {
+    res.status(500).json({ message: e?.message || "Erreur serveur" });
+  }
+});
+*/
+
 app.listen(PORT, "127.0.0.1", () => {
   console.log("✅ Backend listening on http://127.0.0.1:" + PORT);
 });

@@ -11,8 +11,9 @@ import ChatModal from "../components/ChatModal.jsx";
 import MultiImageUploader from "../components/MultiImageUploader.jsx";
 import Gallery from "../components/Gallery.jsx";
 import { useTranslation } from "react-i18next";
+import starsBg from "../assets/stars-bg.jpg";
 
-const API_BASE = "http://127.0.0.1:3001";
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:3001";
 
 export default function Profile() {
   const { user, token, logout, updateUser } = useContext(AuthContext);
@@ -154,7 +155,9 @@ export default function Profile() {
 
   const avatarUrl = useMemo(() => {
     if (!user?.avatar) return "";
-    return `${API_BASE}${user.avatar}`;
+    const cleanAvatar = user.avatar.split("?")[0];
+    const ts = user.avatar.includes("?t=") ? user.avatar.split("?t=")[1] : "";
+    return `${API_BASE}${cleanAvatar}${ts ? "?t=" + ts : ""}`;
   }, [user?.avatar]);
 
   const currentUserId = user?.id;
@@ -282,7 +285,7 @@ export default function Profile() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || `Erreur upload (${res.status})`);
-      updateUser({ avatar: data.avatar });
+      updateUser({ avatar: data.avatar + "?t=" + Date.now() });
       setAvatarFile(null);
       setAvatarPreview("");
       setShowAvatarAction(false);
@@ -299,6 +302,9 @@ export default function Profile() {
   return (
     <div className="profile-page">
       <Sidebar />
+
+      <div className="profile__bg" style={{ backgroundImage: `url(${starsBg})` }} />
+      <div className="profile__stars" />
 
       <main className="profile-stage">
         <section className="profile-col">
@@ -467,7 +473,6 @@ export default function Profile() {
 
               <div className="panel" style={{ marginTop: 14 }}>
                 <div className="panel-title">{t("my_besoins")}</div>
-                {/* ✅ token passé en prop */}
                 <BesoinsList
                   besoins={besoins}
                   onPropose={openOfferModal}
@@ -478,7 +483,6 @@ export default function Profile() {
 
               <div className="panel" style={{ marginTop: 14 }}>
                 <div className="panel-title">{t("others_besoins")}</div>
-                {/* ✅ token passé en prop */}
                 <BesoinsList
                   besoins={publicBesoins}
                   onPropose={openOfferModal}

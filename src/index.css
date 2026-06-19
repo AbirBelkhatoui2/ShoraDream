@@ -1,4 +1,5 @@
 /* RESET */
+@import "tailwindcss";
 * { box-sizing: border-box; }
 
 body {

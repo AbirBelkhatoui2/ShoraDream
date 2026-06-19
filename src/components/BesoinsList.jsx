@@ -1,9 +1,10 @@
+// src/components/BesoinsList.jsx
 import { useState } from "react";
 import Gallery from "./Gallery";
 import { useTranslation } from "react-i18next";
 import { toggleFavorite } from "../api.js";
 
-const API_BASE = "http://127.0.0.1:3001";
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:3001";
 
 function toAbs(url) {
   if (!url) return "";
@@ -19,7 +20,6 @@ function formatDate(iso, i18nLang) {
 
 export function BesoinsList({ besoins, onPropose, currentUserId, onEdit, onDelete, token }) {
   const { t, i18n } = useTranslation();
-
   const [favs, setFavs] = useState(new Set());
   const [busy, setBusy] = useState(new Set());
 
@@ -42,15 +42,11 @@ export function BesoinsList({ besoins, onPropose, currentUserId, onEdit, onDelet
   };
 
   if (!besoins || besoins.length === 0) {
-    return (
-      <div className="empty">
-        <p>{t("empty_besoins")}</p>
-      </div>
-    );
+    return <div className="empty"><p>{t("empty_besoins")}</p></div>;
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="card-list">
       {besoins.map((b) => {
         const images = (b.images || []).filter(Boolean).map(toAbs);
         const isOwner = currentUserId && String(b.owner) === String(currentUserId);
@@ -66,54 +62,40 @@ export function BesoinsList({ besoins, onPropose, currentUserId, onEdit, onDelet
               </div>
             ) : null}
 
-            <div className="card-ui-header">
-              <div className="card-ui-title">{b.title}</div>
-              <div className="card-ui-meta">
-                <span className="badge-ui">🏷️ {t("category")}: {b.category || "general"}</span>
-                <span className="meta-ui">📅 {formatDate(b.createdAt, i18n.language)}</span>
-                <span className="badge-ui badge-ui--soft">{String(b.status || "open").toUpperCase()}</span>
-                <span className="meta-ui">🤝 {b.offersCount ?? 0} {t("offers_count") || "proposition(s)"}</span>
-              </div>
+            <div className="card-ui-title">{b.title}</div>
+            <div className="card-ui-meta">
+              <span className="badge-ui">🏷️ {b.category || "general"}</span>
+              <span className="badge-ui badge-ui--soft">{String(b.status || "open").toUpperCase()}</span>
+              <span>📅 {formatDate(b.createdAt, i18n.language)}</span>
+              <span>🤝 {b.offersCount ?? 0} proposition(s)</span>
             </div>
 
-            <div className="card-ui-content">
-              <p className="card-ui-desc">{b.description || "—"}</p>
+            {b.description ? <p className="card-ui-desc">{b.description}</p> : null}
 
-              <div className="card-ui-actions" style={{ gap: 10, display: "flex", flexWrap: "wrap", justifyContent: "flex-end" }}>
-
-                {!isOwner ? (
-                  <button
-                    className="btn-ghost"
-                    type="button"
-                    onClick={() => onFav(b._id)}
-                    disabled={isBusy || !token}
-                    style={{ color: isFav ? "#f9c74f" : "inherit", transition: "color 0.2s" }}
-                  >
-                    {isBusy ? "…" : isFav ? "★ Favori" : "☆ Favori"}
-                  </button>
-                ) : null}
-
+            <div className="card-ui-actions">
+              {!isOwner && (
                 <button
-                  className="btn-primary"
-                  type="button"
-                  onClick={() => onPropose?.(b)}
-                  disabled={(b.status || "open") !== "open"}
+                  className="btn-ghost" type="button"
+                  onClick={() => onFav(b._id)}
+                  disabled={isBusy || !token}
+                  style={{ color: isFav ? "#f9c74f" : "inherit" }}
                 >
-                  {t("propose_help")}
+                  {isBusy ? "…" : isFav ? "★ Favori" : "☆ Favori"}
                 </button>
-
-                {isOwner && onEdit ? (
-                  <button className="btn-ghost" type="button" onClick={() => onEdit(b)}>
-                    {t("edit")}
-                  </button>
-                ) : null}
-
-                {isOwner && onDelete ? (
-                  <button className="btn-ghost" type="button" onClick={() => onDelete(b)}>
-                    {t("delete")}
-                  </button>
-                ) : null}
-              </div>
+              )}
+              <button
+                className="btn-primary" type="button"
+                onClick={() => onPropose?.(b)}
+                disabled={(b.status || "open") !== "open"}
+              >
+                {t("propose_help")}
+              </button>
+              {isOwner && onEdit && (
+                <button className="btn-ghost" type="button" onClick={() => onEdit(b)}>{t("edit")}</button>
+              )}
+              {isOwner && onDelete && (
+                <button className="btn-ghost" type="button" onClick={() => onDelete(b)}>{t("delete")}</button>
+              )}
             </div>
           </div>
         );
