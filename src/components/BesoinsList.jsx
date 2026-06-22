@@ -1,5 +1,6 @@
 // src/components/BesoinsList.jsx
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Gallery from "./Gallery";
 import { useTranslation } from "react-i18next";
 import { toggleFavorite } from "../api.js";
@@ -20,6 +21,7 @@ function formatDate(iso, i18nLang) {
 
 export function BesoinsList({ besoins, onPropose, currentUserId, onEdit, onDelete, token }) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const [favs, setFavs] = useState(new Set());
   const [busy, setBusy] = useState(new Set());
 
@@ -54,15 +56,65 @@ export function BesoinsList({ besoins, onPropose, currentUserId, onEdit, onDelet
         const isFav = favs.has(key);
         const isBusy = busy.has(key);
 
+        const ownerName = b.ownerPublic?.name || b.owner?.name || null;
+        const ownerAvatar = b.ownerPublic?.avatar || b.owner?.avatar || null;
+        const ownerId = b.ownerPublic?.id || b.ownerPublic?._id || b.owner?._id || null;
+
         return (
           <div key={b._id} className="card-ui">
+
+            {/* ✅ En-tête avec avatar + nom cliquables */}
+            {ownerName && !isOwner && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                marginBottom: 10, paddingBottom: 10,
+                borderBottom: "1px solid rgba(255,255,255,0.08)"
+              }}>
+                {/* Avatar cliquable */}
+                <div
+                  onClick={() => ownerId && navigate(`/u/${ownerId}`)}
+                  style={{
+                    width: 36, height: 36, borderRadius: 999,
+                    overflow: "hidden", border: "1px solid rgba(255,255,255,0.18)",
+                    background: "rgba(255,255,255,0.06)",
+                    display: "grid", placeItems: "center", flexShrink: 0,
+                    cursor: ownerId ? "pointer" : "default",
+                  }}
+                  title={ownerId ? `Voir le profil de ${ownerName}` : ""}
+                >
+                  {ownerAvatar
+                    ? <img src={toAbs(ownerAvatar)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <span style={{ fontSize: 16 }}>👤</span>
+                  }
+                </div>
+
+                {/* Nom cliquable */}
+                <span
+                  onClick={() => ownerId && navigate(`/u/${ownerId}`)}
+                  style={{
+                    fontWeight: 800, fontSize: 13,
+                    cursor: ownerId ? "pointer" : "default",
+                    color: ownerId ? "#a78bfa" : "inherit",
+                    textDecoration: ownerId ? "underline dotted" : "none",
+                  }}
+                  title={ownerId ? `Voir le profil de ${ownerName}` : ""}
+                >
+                  {ownerName}
+                </span>
+              </div>
+            )}
+
+            {/* Images */}
             {images.length ? (
               <div style={{ marginBottom: 10 }}>
                 <Gallery images={images} alt={b.title} />
               </div>
             ) : null}
 
+            {/* Titre */}
             <div className="card-ui-title">{b.title}</div>
+
+            {/* Méta */}
             <div className="card-ui-meta">
               <span className="badge-ui">🏷️ {b.category || "general"}</span>
               <span className="badge-ui badge-ui--soft">{String(b.status || "open").toUpperCase()}</span>
@@ -70,8 +122,10 @@ export function BesoinsList({ besoins, onPropose, currentUserId, onEdit, onDelet
               <span>🤝 {b.offersCount ?? 0} proposition(s)</span>
             </div>
 
+            {/* Description */}
             {b.description ? <p className="card-ui-desc">{b.description}</p> : null}
 
+            {/* Actions */}
             <div className="card-ui-actions">
               {!isOwner && (
                 <button

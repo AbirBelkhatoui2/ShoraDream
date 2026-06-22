@@ -1,5 +1,6 @@
 // src/pages/Profile.jsx (COMPLET)
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import Sidebar from "../components/SideBar.jsx";
 import "../styles/profile.css";
 import { AuthContext } from "../context/AuthContext.jsx";
@@ -18,15 +19,20 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:3001";
 export default function Profile() {
   const { user, token, logout, updateUser } = useContext(AuthContext);
   const { t } = useTranslation();
+  const location = useLocation();
 
-  const [tab, setTab] = useState("annonces");
+  // ✅ Lit ?tab= dans l'URL (depuis notifications)
+  const [tab, setTab] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("tab") || "annonces";
+  });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const [annonces, setAnnonces] = useState([]);
   const [besoins, setBesoins] = useState([]);
   const [publicBesoins, setPublicBesoins] = useState([]);
-
   const [stars, setStars] = useState([]);
   const [newStarTitle, setNewStarTitle] = useState("");
   const [starImages, setStarImages] = useState([]);
@@ -56,29 +62,14 @@ export default function Profile() {
     const email = String(pfEmail || "").trim().toLowerCase();
     const phone = String(pfPhone || "").trim();
     const location = String(pfLocation || "").trim();
-    const topSkills = String(pfTopSkills || "")
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .slice(0, 20);
+    const topSkills = String(pfTopSkills || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 20);
     const summary = String(pfSummary || "").trim();
-
     if (!name) return setPfError(t("err_name_required"));
     if (!email) return setPfError(t("err_email_required"));
-
     setPfSaving(true);
     try {
       const res = await apiSend("/users/me", "PUT", token, { name, email, phone, location, topSkills, summary });
-      updateUser({
-        id: res.user.id,
-        name: res.user.name,
-        email: res.user.email,
-        phone: res.user.phone || "",
-        location: res.user.location || "",
-        avatar: res.user.avatar || "",
-        topSkills: Array.isArray(res.user.topSkills) ? res.user.topSkills : [],
-        summary: res.user.summary || "",
-      });
+      updateUser({ id: res.user.id, name: res.user.name, email: res.user.email, phone: res.user.phone || "", location: res.user.location || "", avatar: res.user.avatar || "", topSkills: Array.isArray(res.user.topSkills) ? res.user.topSkills : [], summary: res.user.summary || "" });
       setEditProfileOpen(false);
     } catch (e) {
       setPfError(e?.message || String(e));
@@ -91,23 +82,15 @@ export default function Profile() {
     const id = user?.id;
     if (!id) return;
     const url = `${window.location.origin}/u/${id}`;
-    const text = `${t("share_profile_text")} : ${url}`;
     try {
-      if (navigator.share) {
-        await navigator.share({ title: t("share_profile_title"), text, url });
-        return;
-      }
+      if (navigator.share) { await navigator.share({ title: t("share_profile_title"), text: `${t("share_profile_text")} : ${url}`, url }); return; }
     } catch {}
     try {
       await navigator.clipboard.writeText(url);
       alert(t("link_copied"));
     } catch {
       const ta = document.createElement("textarea");
-      ta.value = url;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
+      ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
       alert(t("link_copied"));
     }
   };
@@ -123,23 +106,17 @@ export default function Profile() {
       starImages.forEach((f) => fd.append("images", f));
       const res = await apiSend("/stars", "POST", token, fd);
       setStars((prev) => [res.item, ...prev]);
-      setNewStarTitle("");
-      setStarImages([]);
-    } catch (e) {
-      setError(e?.message || String(e));
-    }
+      setNewStarTitle(""); setStarImages([]);
+    } catch (e) { setError(e?.message || String(e)); }
   };
 
   const deleteStar = async (id) => {
-    if (!id) return;
-    if (!confirm(t("confirm_delete_star"))) return;
+    if (!id || !confirm(t("confirm_delete_star"))) return;
     try {
       setError("");
       await apiSend(`/stars/${id}`, "DELETE", token, null);
       setStars((prev) => prev.filter((s) => s._id !== id));
-    } catch (e) {
-      setError(e?.message || String(e));
-    }
+    } catch (e) { setError(e?.message || String(e)); }
   };
 
   const [newAnnonceTitle, setNewAnnonceTitle] = useState("");
@@ -164,43 +141,23 @@ export default function Profile() {
 
   const [offerOpen, setOfferOpen] = useState(false);
   const [selectedBesoin, setSelectedBesoin] = useState(null);
-
-  const openOfferModal = (besoin) => {
-    setSelectedBesoin(besoin);
-    setOfferOpen(true);
-  };
-
-  const closeOfferModal = () => {
-    setOfferOpen(false);
-    setSelectedBesoin(null);
-  };
+  const openOfferModal = (besoin) => { setSelectedBesoin(besoin); setOfferOpen(true); };
+  const closeOfferModal = () => { setOfferOpen(false); setSelectedBesoin(null); };
 
   const [chatOpen, setChatOpen] = useState(false);
   const [chatBesoin, setChatBesoin] = useState(null);
   const [chatOffer, setChatOffer] = useState(null);
-
-  const openChat = (besoin, offer) => {
-    setChatBesoin(besoin);
-    setChatOffer(offer || null);
-    setChatOpen(true);
-  };
-
-  const closeChat = () => {
-    setChatOpen(false);
-    setChatBesoin(null);
-    setChatOffer(null);
-  };
+  const openChat = (besoin, offer) => { setChatBesoin(besoin); setChatOffer(offer || null); setChatOpen(true); };
+  const closeChat = () => { setChatOpen(false); setChatBesoin(null); setChatOffer(null); };
 
   useEffect(() => {
-    if (!avatarFile) {
-      setAvatarPreview("");
-      return;
-    }
+    if (!avatarFile) { setAvatarPreview(""); return; }
     const url = URL.createObjectURL(avatarFile);
     setAvatarPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [avatarFile]);
 
+  // ✅ Charger les données puis ouvrir le chat/offer depuis l'URL
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -218,6 +175,34 @@ export default function Profile() {
         setBesoins(b.items || []);
         setPublicBesoins(p.items || []);
         setStars(s.items || []);
+
+        // ✅ Ouvrir automatiquement le chat depuis notification
+        const params = new URLSearchParams(location.search);
+        const openChatId = params.get("openChat");
+        const openOfferId = params.get("openOffer");
+
+        if (openChatId) {
+          // Cherche le besoin dans mes besoins ou les besoins des autres
+          const allBesoins = [...(b.items || []), ...(p.items || [])];
+          const targetBesoin = allBesoins.find(x => String(x._id) === openChatId);
+          if (targetBesoin) {
+            // Charge les offres pour trouver la première
+            try {
+              const offersRes = await apiGet(`/besoins/${openChatId}/offers`, token);
+              const firstOffer = offersRes.items?.[0] || null;
+              openChat(targetBesoin, firstOffer);
+            } catch {
+              openChat(targetBesoin, null);
+            }
+          }
+        }
+
+        if (openOfferId) {
+          const allBesoins = [...(b.items || []), ...(p.items || [])];
+          const targetBesoin = allBesoins.find(x => String(x._id) === openOfferId);
+          if (targetBesoin) openOfferModal(targetBesoin);
+        }
+
       } catch (e) {
         if (cancelled) return;
         const msg = e?.message || String(e);
@@ -243,11 +228,8 @@ export default function Profile() {
       annonceImages.forEach((file) => fd.append("images", file));
       const res = await apiSend("/annonces", "POST", token, fd);
       setAnnonces((prev) => [res.item, ...prev]);
-      setNewAnnonceTitle("");
-      setAnnonceImages([]);
-    } catch (e) {
-      setError(e?.message || String(e));
-    }
+      setNewAnnonceTitle(""); setAnnonceImages([]);
+    } catch (e) { setError(e?.message || String(e)); }
   };
 
   const createBesoin = async () => {
@@ -263,11 +245,8 @@ export default function Profile() {
       besoinImages.forEach((file) => fd.append("images", file));
       const res = await apiSend("/besoins", "POST", token, fd);
       setBesoins((prev) => [res.item, ...prev]);
-      setNewBesoinTitle("");
-      setBesoinImages([]);
-    } catch (e) {
-      setError(e?.message || String(e));
-    }
+      setNewBesoinTitle(""); setBesoinImages([]);
+    } catch (e) { setError(e?.message || String(e)); }
   };
 
   const uploadAvatar = async () => {
@@ -278,17 +257,11 @@ export default function Profile() {
     try {
       const formData = new FormData();
       formData.append("avatar", avatarFile);
-      const res = await fetch(`${API_BASE}/users/avatar`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      const res = await fetch(`${API_BASE}/users/avatar`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || `Erreur upload (${res.status})`);
       updateUser({ avatar: data.avatar + "?t=" + Date.now() });
-      setAvatarFile(null);
-      setAvatarPreview("");
-      setShowAvatarAction(false);
+      setAvatarFile(null); setAvatarPreview(""); setShowAvatarAction(false);
     } catch (e) {
       setError(e?.message || String(e));
     } finally {
@@ -302,7 +275,6 @@ export default function Profile() {
   return (
     <div className="profile-page">
       <Sidebar />
-
       <div className="profile__bg" style={{ backgroundImage: `url(${starsBg})` }} />
       <div className="profile__stars" />
 
@@ -310,185 +282,89 @@ export default function Profile() {
         <section className="profile-col">
           <div className="profile-card">
             <div className="profile-banner" />
-
             <div className="profile-head">
               <div className="profile-avatar-wrap">
-                <button
-                  type="button"
-                  className="profile-avatar"
-                  onClick={() => setShowAvatarAction((v) => !v)}
-                  title={t("change_photo")}
-                >
-                  {avatarPreview ? (
-                    <img src={avatarPreview} alt="preview avatar" className="avatar-img" />
-                  ) : avatarUrl ? (
-                    <img src={avatarUrl} alt="avatar" className="avatar-img" />
-                  ) : (
-                    <span className="avatar-fallback">👩‍💻</span>
-                  )}
-                  <span className="avatar-overlay">
-                    <Camera size={18} />
-                    <span>{t("change")}</span>
-                  </span>
+                <button type="button" className="profile-avatar" onClick={() => setShowAvatarAction((v) => !v)} title={t("change_photo")}>
+                  {avatarPreview ? <img src={avatarPreview} alt="preview avatar" className="avatar-img" />
+                    : avatarUrl ? <img src={avatarUrl} alt="avatar" className="avatar-img" />
+                    : <span className="avatar-fallback">👩‍💻</span>}
+                  <span className="avatar-overlay"><Camera size={18} /><span>{t("change")}</span></span>
                 </button>
-
                 {showAvatarAction && (
                   <div className="avatar-actions">
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setAvatarFile(e.target.files?.[0] || null)}
-                      className="avatar-file"
-                    />
-                    <button type="button" className="btn-ghost"
-                      onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
-                      disabled={uploadingAvatar}>
-                      {t("choose_image")}
-                    </button>
-                    <button className="btn-primary" type="button"
-                      onClick={(e) => { e.stopPropagation(); uploadAvatar(); }}
-                      disabled={uploadingAvatar || !avatarFile}>
-                      {uploadingAvatar ? t("uploading") : t("change_photo")}
-                    </button>
-                    <button className="btn-ghost" type="button"
-                      onClick={(e) => { e.stopPropagation(); setAvatarFile(null); setShowAvatarAction(false); }}
-                      disabled={uploadingAvatar}>
-                      {t("cancel")}
-                    </button>
+                    <input ref={fileRef} type="file" accept="image/*" onChange={(e) => setAvatarFile(e.target.files?.[0] || null)} className="avatar-file" />
+                    <button type="button" className="btn-ghost" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }} disabled={uploadingAvatar}>{t("choose_image")}</button>
+                    <button className="btn-primary" type="button" onClick={(e) => { e.stopPropagation(); uploadAvatar(); }} disabled={uploadingAvatar || !avatarFile}>{uploadingAvatar ? t("uploading") : t("change_photo")}</button>
+                    <button className="btn-ghost" type="button" onClick={(e) => { e.stopPropagation(); setAvatarFile(null); setShowAvatarAction(false); }} disabled={uploadingAvatar}>{t("cancel")}</button>
                   </div>
                 )}
               </div>
-
               <div className="profile-id">
                 <div className="profile-handle">@{slugify(user?.name || "user")}</div>
-                <div className="profile-name">
-                  {user?.name || t("user")} <span className="badge-verified">✔</span>
-                </div>
+                <div className="profile-name">{user?.name || t("user")} <span className="badge-verified">✔</span></div>
                 <div className="profile-sub">{t("my_profile")}</div>
                 <div className="profile-meta">
-                  <span>📧 {user?.email || ""}</span>
-                  <span className="dot" />
-                  <span>📞 {user?.phone || "—"}</span>
-                  <span className="dot" />
+                  <span>📧 {user?.email || ""}</span><span className="dot" />
+                  <span>📞 {user?.phone || "—"}</span><span className="dot" />
                   <span>📍 {user?.location || "—"}</span>
                 </div>
                 <div className="profile-actions" style={{ marginTop: 12 }}>
-                  <button className="btn-primary" type="button" onClick={() => setEditProfileOpen(true)}>
-                    {t("edit_profile")}
-                  </button>
-                  <button className="btn-ghost" type="button" onClick={shareProfile}>
-                    {t("share")}
-                  </button>
+                  <button className="btn-primary" type="button" onClick={() => setEditProfileOpen(true)}>{t("edit_profile")}</button>
+                  <button className="btn-ghost" type="button" onClick={shareProfile}>{t("share")}</button>
                 </div>
               </div>
             </div>
           </div>
 
-          {error && (
-            <div className="panel" style={{ borderColor: "rgba(255,80,80,0.35)" }}>
-              {error}
-            </div>
-          )}
+          {error && <div className="panel" style={{ borderColor: "rgba(255,80,80,0.35)" }}>{error}</div>}
 
           <div className="tabs">
-            <button className={`tab ${tab === "annonces" ? "tab--active" : ""}`} onClick={() => setTab("annonces")} type="button">
-              {t("tab_annonces")}
-            </button>
-            <button className={`tab ${tab === "stars" ? "tab--active" : ""}`} onClick={() => setTab("stars")} type="button">
-              {t("tab_stars")}
-            </button>
-            <button className={`tab ${tab === "besoins" ? "tab--active" : ""}`} onClick={() => setTab("besoins")} type="button">
-              {t("tab_besoins")}
-            </button>
+            <button className={`tab ${tab === "annonces" ? "tab--active" : ""}`} onClick={() => setTab("annonces")} type="button">{t("tab_annonces")}</button>
+            <button className={`tab ${tab === "stars" ? "tab--active" : ""}`} onClick={() => setTab("stars")} type="button">{t("tab_stars")}</button>
+            <button className={`tab ${tab === "besoins" ? "tab--active" : ""}`} onClick={() => setTab("besoins")} type="button">{t("tab_besoins")}</button>
           </div>
 
           {loading ? (
-            <div className="panel">
-              <div className="panel-title">{t("loading")}</div>
-            </div>
+            <div className="panel"><div className="panel-title">{t("loading")}</div></div>
           ) : tab === "annonces" ? (
             <div className="panel">
               <div className="panel-title">{t("annonces")}</div>
               <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-                <input
-                  value={newAnnonceTitle}
-                  onChange={(e) => setNewAnnonceTitle(e.target.value)}
-                  placeholder={t("new_annonce_placeholder")}
-                  style={inputStyle}
-                />
-                <button className="btn-primary" type="button" onClick={createAnnonce}>
-                  {t("add")}
-                </button>
+                <input value={newAnnonceTitle} onChange={(e) => setNewAnnonceTitle(e.target.value)} placeholder={t("new_annonce_placeholder")} style={inputStyle} />
+                <button className="btn-primary" type="button" onClick={createAnnonce}>{t("add")}</button>
               </div>
               <MultiImageUploader images={annonceImages} setImages={setAnnonceImages} />
-              <div className="card-list">
-                {annonces.map((x) => (
-                  <AnnonceCard key={x._id} item={x} t={t} />
-                ))}
-              </div>
+              <div className="card-list">{annonces.map((x) => <AnnonceCard key={x._id} item={x} t={t} />)}</div>
               {annonces.length === 0 && <div className="empty">{t("empty_annonces")}</div>}
             </div>
-
           ) : tab === "stars" ? (
             <div className="panel">
               <div className="panel-title">{t("my_stars")}</div>
               <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <input
-                  value={newStarTitle}
-                  onChange={(e) => setNewStarTitle(e.target.value)}
-                  placeholder={t("star_title_placeholder")}
-                  style={inputStyle}
-                />
-                <button className="btn-primary" type="button" onClick={createStar} disabled={!newStarTitle.trim()}>
-                  {t("add")}
-                </button>
+                <input value={newStarTitle} onChange={(e) => setNewStarTitle(e.target.value)} placeholder={t("star_title_placeholder")} style={inputStyle} />
+                <button className="btn-primary" type="button" onClick={createStar} disabled={!newStarTitle.trim()}>{t("add")}</button>
               </div>
               <MultiImageUploader images={starImages} setImages={setStarImages} />
-              <div className="card-list">
-                {stars.map((s) => (
-                  <StarCard key={s._id} item={s} onDelete={() => deleteStar(s._id)} t={t} />
-                ))}
-              </div>
+              <div className="card-list">{stars.map((s) => <StarCard key={s._id} item={s} onDelete={() => deleteStar(s._id)} t={t} />)}</div>
               {stars.length === 0 && <div className="empty">{t("empty_stars")}</div>}
             </div>
-
           ) : (
             <>
               <div className="panel">
                 <div className="panel-title">{t("create_besoin")}</div>
                 <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-                  <input
-                    value={newBesoinTitle}
-                    onChange={(e) => setNewBesoinTitle(e.target.value)}
-                    placeholder={t("new_besoin_placeholder")}
-                    style={inputStyle}
-                  />
-                  <button className="btn-primary" type="button" onClick={createBesoin}>
-                    {t("add")}
-                  </button>
+                  <input value={newBesoinTitle} onChange={(e) => setNewBesoinTitle(e.target.value)} placeholder={t("new_besoin_placeholder")} style={inputStyle} />
+                  <button className="btn-primary" type="button" onClick={createBesoin}>{t("add")}</button>
                 </div>
                 <MultiImageUploader images={besoinImages} setImages={setBesoinImages} />
               </div>
-
               <div className="panel" style={{ marginTop: 14 }}>
                 <div className="panel-title">{t("my_besoins")}</div>
-                <BesoinsList
-                  besoins={besoins}
-                  onPropose={openOfferModal}
-                  currentUserId={currentUserId}
-                  token={token}
-                />
+                <BesoinsList besoins={besoins} onPropose={openOfferModal} currentUserId={currentUserId} token={token} />
               </div>
-
               <div className="panel" style={{ marginTop: 14 }}>
                 <div className="panel-title">{t("others_besoins")}</div>
-                <BesoinsList
-                  besoins={publicBesoins}
-                  onPropose={openOfferModal}
-                  currentUserId={currentUserId}
-                  token={token}
-                />
+                <BesoinsList besoins={publicBesoins} onPropose={openOfferModal} currentUserId={currentUserId} token={token} />
               </div>
             </>
           )}
@@ -498,9 +374,7 @@ export default function Profile() {
           <div className="side-box">
             <div className="side-title">{t("top_skills")}</div>
             <div className="chips">
-              {shownSkills.length
-                ? shownSkills.map((s, i) => <span key={i} className="chip">{s}</span>)
-                : <span className="chip">—</span>}
+              {shownSkills.length ? shownSkills.map((s, i) => <span key={i} className="chip">{s}</span>) : <span className="chip">—</span>}
             </div>
           </div>
           <div className="side-box">
@@ -510,86 +384,45 @@ export default function Profile() {
         </aside>
 
         <OfferModal
-          open={offerOpen}
-          besoin={selectedBesoin}
-          token={token}
-          apiGet={apiGet}
-          apiSend={apiSend}
-          currentUserId={currentUserId}
+          open={offerOpen} besoin={selectedBesoin} token={token}
+          apiGet={apiGet} apiSend={apiSend} currentUserId={currentUserId}
           onClose={closeOfferModal}
           onOfferAdded={(besoinId) => {
-            setPublicBesoins((prev) =>
-              prev.map((b) => (b._id === besoinId ? { ...b, offersCount: (b.offersCount ?? 0) + 1 } : b))
-            );
-            setBesoins((prev) =>
-              prev.map((b) => (b._id === besoinId ? { ...b, offersCount: (b.offersCount ?? 0) + 1 } : b))
-            );
+            setPublicBesoins((prev) => prev.map((b) => b._id === besoinId ? { ...b, offersCount: (b.offersCount ?? 0) + 1 } : b));
+            setBesoins((prev) => prev.map((b) => b._id === besoinId ? { ...b, offersCount: (b.offersCount ?? 0) + 1 } : b));
           }}
           onOpenChat={openChat}
         />
 
-        <ChatModal
-          open={chatOpen}
-          onClose={closeChat}
-          besoin={chatBesoin}
-          offer={chatOffer}
-          token={token}
-          apiGet={apiGet}
-          apiSend={apiSend}
-        />
+        <ChatModal open={chatOpen} onClose={closeChat} besoin={chatBesoin} offer={chatOffer} token={token} apiGet={apiGet} apiSend={apiSend} />
 
-        {editProfileOpen ? (
+        {editProfileOpen && (
           <div className="modal-backdrop" onMouseDown={() => setEditProfileOpen(false)}>
             <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>
               <div className="modal-head">
-                <div>
-                  <div className="modal-title">{t("edit_profile")}</div>
-                  <div className="modal-sub">{t("edit_profile_sub")}</div>
-                </div>
+                <div><div className="modal-title">{t("edit_profile")}</div><div className="modal-sub">{t("edit_profile_sub")}</div></div>
                 <button className="btn-ghost" type="button" onClick={() => setEditProfileOpen(false)}>✕</button>
               </div>
-
-              {pfError ? <div className="modal-error">{pfError}</div> : null}
-
+              {pfError && <div className="modal-error">{pfError}</div>}
               <label className="modal-label">{t("name")}</label>
-              <input value={pfName} onChange={(e) => setPfName(e.target.value)}
-                placeholder={t("your_name")} style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
-
+              <input value={pfName} onChange={(e) => setPfName(e.target.value)} placeholder={t("your_name")} style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("email")}</label>
-              <input value={pfEmail} onChange={(e) => setPfEmail(e.target.value)}
-                placeholder="ton@email.com" style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
-
+              <input value={pfEmail} onChange={(e) => setPfEmail(e.target.value)} placeholder="ton@email.com" style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("phone")}</label>
-              <input value={pfPhone} onChange={(e) => setPfPhone(e.target.value)}
-                placeholder="06..." style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
-
+              <input value={pfPhone} onChange={(e) => setPfPhone(e.target.value)} placeholder="06..." style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("location")}</label>
-              <input value={pfLocation} onChange={(e) => setPfLocation(e.target.value)}
-                placeholder={t("city")} style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
-
+              <input value={pfLocation} onChange={(e) => setPfLocation(e.target.value)} placeholder={t("city")} style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("top_skills")}</label>
-              <input value={pfTopSkills} onChange={(e) => setPfTopSkills(e.target.value)}
-                placeholder="Ex: React, Organisation, Communication"
-                style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
-
+              <input value={pfTopSkills} onChange={(e) => setPfTopSkills(e.target.value)} placeholder="Ex: React, Organisation, Communication" style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("summary")}</label>
-              <textarea value={pfSummary} onChange={(e) => setPfSummary(e.target.value)}
-                placeholder={t("summary_text")}
-                style={{ ...inputStyle, width: "100%", marginTop: 8, minHeight: 110, resize: "vertical" }} />
-
+              <textarea value={pfSummary} onChange={(e) => setPfSummary(e.target.value)} placeholder={t("summary_text")} style={{ ...inputStyle, width: "100%", marginTop: 8, minHeight: 110, resize: "vertical" }} />
               <div className="modal-actions">
-                <button className="btn-ghost" type="button"
-                  onClick={() => setEditProfileOpen(false)} disabled={pfSaving}>
-                  {t("cancel")}
-                </button>
-                <button className="btn-primary" type="button"
-                  onClick={saveProfile} disabled={pfSaving}>
-                  {pfSaving ? t("saving") : t("save")}
-                </button>
+                <button className="btn-ghost" type="button" onClick={() => setEditProfileOpen(false)} disabled={pfSaving}>{t("cancel")}</button>
+                <button className="btn-primary" type="button" onClick={saveProfile} disabled={pfSaving}>{pfSaving ? t("saving") : t("save")}</button>
               </div>
             </div>
           </div>
-        ) : null}
+        )}
       </main>
     </div>
   );
@@ -599,17 +432,9 @@ function StarCard({ item, onDelete, t }) {
   const images = (item.images || []).filter(Boolean).map((p) => `${API_BASE}${p}`);
   return (
     <div className="item-card" style={{ display: "block" }}>
-      {images.length > 0 ? (
-        <div style={{ marginBottom: 10 }}>
-          <Gallery images={images} alt={item.title} />
-        </div>
-      ) : null}
+      {images.length > 0 && <div style={{ marginBottom: 10 }}><Gallery images={images} alt={item.title} /></div>}
       <div className="item-title">{item.title}</div>
-      <div style={{ marginTop: 10 }}>
-        <button className="btn-ghost" type="button" onClick={onDelete}>
-          {t("delete")}
-        </button>
-      </div>
+      <div style={{ marginTop: 10 }}><button className="btn-ghost" type="button" onClick={onDelete}>{t("delete")}</button></div>
     </div>
   );
 }
@@ -618,11 +443,7 @@ function AnnonceCard({ item, t }) {
   const images = (item.images || []).filter(Boolean).map((p) => `${API_BASE}${p}`);
   return (
     <div className="item-card" style={{ display: "block" }}>
-      {images.length > 0 ? (
-        <div style={{ marginBottom: 10 }}>
-          <Gallery images={images} alt={item.title} />
-        </div>
-      ) : null}
+      {images.length > 0 && <div style={{ marginBottom: 10 }}><Gallery images={images} alt={item.title} /></div>}
       <div className="item-title">{item.title}</div>
       <div className="item-meta" style={{ marginTop: 6, opacity: 0.75 }}>
         {`${item.location || "—"} • ${formatDate(item.createdAt)} • ⭐ ${item.stars ?? 0}`}
@@ -632,11 +453,7 @@ function AnnonceCard({ item, t }) {
 }
 
 function slugify(name) {
-  return String(name || "user")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ".")
-    .replace(/[^a-z0-9._-]/g, "");
+  return String(name || "user").trim().toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9._-]/g, "");
 }
 
 function formatDate(iso) {
@@ -645,11 +462,8 @@ function formatDate(iso) {
 }
 
 const inputStyle = {
-  flex: 1,
-  padding: "12px 14px",
-  borderRadius: 14,
+  flex: 1, padding: "12px 14px", borderRadius: 14,
   border: "1px solid rgba(255,255,255,0.18)",
   background: "rgba(255,255,255,0.06)",
-  color: "white",
-  outline: "none",
+  color: "white", outline: "none",
 };
