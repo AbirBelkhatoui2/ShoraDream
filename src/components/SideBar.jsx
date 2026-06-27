@@ -42,11 +42,11 @@ export default function Sidebar() {
   const { t } = useTranslation();
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const routes = ["/home", "/accueil", "/profile", "/favorites", "/notifications"];
+  // ✅ Ajout de /messages dans les routes
+  const routes = ["/home", "/accueil", "/profile", "/favorites", "/notifications", "/messages"];
   const activeIndex = routes.indexOf(pathname);
   const lineTop = 90 + activeIndex * 70;
 
-  // Polling notifications non lues toutes les 30s
   useEffect(() => {
     if (!token) return;
     const fetchUnread = async () => {
@@ -60,14 +60,13 @@ export default function Sidebar() {
     return () => clearInterval(interval);
   }, [token]);
 
-  const handleLogout = () => {
-    logout();
-    navigate("/login");
-  };
+  const handleLogout = () => { logout(); navigate("/login"); };
 
   return (
     <aside className="side-nav">
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: "14px 0 8px", marginBottom: 4 }} title="ShoraDream">
+
+      {/* Logo — caché sur mobile */}
+      <div className="side-nav__logo" title="ShoraDream">
         <ShoraDreamLogo />
       </div>
 
@@ -83,7 +82,7 @@ export default function Sidebar() {
         <span className="side-nav__icon">☰</span>
       </NavLink>
 
-      <NavLink to="/profile" className="side-nav__btn" title={t("nav_profile") || "Profile"}>
+      <NavLink to="/profile" className="side-nav__btn" title={t("nav_profile") || "Profil"}>
         <span className="side-nav__icon">👤</span>
       </NavLink>
 
@@ -91,37 +90,43 @@ export default function Sidebar() {
         <span className="side-nav__icon">★</span>
       </NavLink>
 
-      {/* 🔔 Cloche notifications avec badge */}
-      <NavLink to="/notifications" className="side-nav__btn" title={t("nav_notifications") || "Notifications"} style={{ position: "relative" }}>
-        <span className="side-nav__icon">🔔</span>
+      {/* Notifications avec badge */}
+      <NavLink
+        to="/notifications"
+        className="side-nav__btn"
+        title={t("nav_notifications") || "Notifications"}
+        style={{ position: "relative" }}
+      >
+        <span className="side-nav__icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+        </span>
         {unreadCount > 0 && (
-          <span style={{
-            position: "absolute",
-            top: 6, right: 6,
-            minWidth: 18, height: 18,
-            borderRadius: 999,
-            background: "linear-gradient(90deg, #ff4d6d, #c9184a)",
-            color: "white",
-            fontSize: 10,
-            fontWeight: 900,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "0 4px",
-            boxShadow: "0 0 8px rgba(255,77,109,0.7)",
-          }}>
+          <span className="side-nav__badge">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
       </NavLink>
 
+      {/* ✅ 💬 Messages */}
+      <NavLink to="/messages" className="side-nav__btn" title="Mes messages">
+        <span className="side-nav__icon">💬</span>
+      </NavLink>
+
       <div className="side-nav__spacer" />
 
-      <div style={{ padding: "10px 8px" }}>
+      {/* Langue — caché sur mobile */}
+      <div className="side-nav__lang">
         <LanguageSwitcher />
       </div>
 
-      <button className="side-nav__btn side-nav__btn--small" onClick={handleLogout} title={t("logout") || "Logout"}>
+      <button
+        className="side-nav__btn side-nav__btn--small"
+        onClick={handleLogout}
+        title={t("logout") || "Logout"}
+      >
         🔚
       </button>
     </aside>

@@ -1,6 +1,6 @@
-// src/pages/Profile.jsx (COMPLET)
+// src/pages/Profile.jsx (COMPLET + suppression de compte)
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "../components/SideBar.jsx";
 import "../styles/profile.css";
 import { AuthContext } from "../context/AuthContext.jsx";
@@ -20,8 +20,8 @@ export default function Profile() {
   const { user, token, logout, updateUser } = useContext(AuthContext);
   const { t } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
 
-  // ✅ Lit ?tab= dans l'URL (depuis notifications)
   const [tab, setTab] = useState(() => {
     const params = new URLSearchParams(location.search);
     return params.get("tab") || "annonces";
@@ -46,6 +46,12 @@ export default function Profile() {
   const [pfSummary, setPfSummary] = useState(user?.summary || "");
   const [pfSaving, setPfSaving] = useState(false);
   const [pfError, setPfError] = useState("");
+
+  // ✅ Suppression de compte
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     setPfName(user?.name || "");
@@ -78,6 +84,22 @@ export default function Profile() {
     }
   };
 
+  // ✅ Supprimer le compte
+  const handleDeleteAccount = async () => {
+    setDeleteError("");
+    if (!deletePassword) { setDeleteError("Saisis ton mot de passe pour confirmer."); return; }
+    setDeleteLoading(true);
+    try {
+      await apiSend("/users/me/delete", "DELETE", token, { password: deletePassword });
+      logout();
+      navigate("/login");
+    } catch (e) {
+      setDeleteError(e?.message || String(e));
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const shareProfile = async () => {
     const id = user?.id;
     if (!id) return;
@@ -90,7 +112,8 @@ export default function Profile() {
       alert(t("link_copied"));
     } catch {
       const ta = document.createElement("textarea");
-      ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      ta.value = url; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); document.body.removeChild(ta);
       alert(t("link_copied"));
     }
   };
@@ -157,12 +180,10 @@ export default function Profile() {
     return () => URL.revokeObjectURL(url);
   }, [avatarFile]);
 
-  // ✅ Charger les données puis ouvrir le chat/offer depuis l'URL
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
-      setError("");
+      setLoading(true); setError("");
       try {
         const [a, b, p, s] = await Promise.all([
           apiGet("/annonces/mine", token),
@@ -176,33 +197,25 @@ export default function Profile() {
         setPublicBesoins(p.items || []);
         setStars(s.items || []);
 
-        // ✅ Ouvrir automatiquement le chat depuis notification
         const params = new URLSearchParams(location.search);
         const openChatId = params.get("openChat");
         const openOfferId = params.get("openOffer");
 
         if (openChatId) {
-          // Cherche le besoin dans mes besoins ou les besoins des autres
           const allBesoins = [...(b.items || []), ...(p.items || [])];
           const targetBesoin = allBesoins.find(x => String(x._id) === openChatId);
           if (targetBesoin) {
-            // Charge les offres pour trouver la première
             try {
               const offersRes = await apiGet(`/besoins/${openChatId}/offers`, token);
-              const firstOffer = offersRes.items?.[0] || null;
-              openChat(targetBesoin, firstOffer);
-            } catch {
-              openChat(targetBesoin, null);
-            }
+              openChat(targetBesoin, offersRes.items?.[0] || null);
+            } catch { openChat(targetBesoin, null); }
           }
         }
-
         if (openOfferId) {
           const allBesoins = [...(b.items || []), ...(p.items || [])];
           const targetBesoin = allBesoins.find(x => String(x._id) === openOfferId);
           if (targetBesoin) openOfferModal(targetBesoin);
         }
-
       } catch (e) {
         if (cancelled) return;
         const msg = e?.message || String(e);
@@ -252,8 +265,7 @@ export default function Profile() {
   const uploadAvatar = async () => {
     if (!avatarFile) { setError(t("choose_image_first")); return; }
     if (!token) { setError(t("missing_token")); return; }
-    setUploadingAvatar(true);
-    setError("");
+    setUploadingAvatar(true); setError("");
     try {
       const formData = new FormData();
       formData.append("avatar", avatarFile);
@@ -285,7 +297,7 @@ export default function Profile() {
             <div className="profile-head">
               <div className="profile-avatar-wrap">
                 <button type="button" className="profile-avatar" onClick={() => setShowAvatarAction((v) => !v)} title={t("change_photo")}>
-                  {avatarPreview ? <img src={avatarPreview} alt="preview avatar" className="avatar-img" />
+                  {avatarPreview ? <img src={avatarPreview} alt="preview" className="avatar-img" />
                     : avatarUrl ? <img src={avatarUrl} alt="avatar" className="avatar-img" />
                     : <span className="avatar-fallback">👩‍💻</span>}
                   <span className="avatar-overlay"><Camera size={18} /><span>{t("change")}</span></span>
@@ -383,10 +395,7 @@ export default function Profile() {
           </div>
         </aside>
 
-        <OfferModal
-          open={offerOpen} besoin={selectedBesoin} token={token}
-          apiGet={apiGet} apiSend={apiSend} currentUserId={currentUserId}
-          onClose={closeOfferModal}
+        <OfferModal open={offerOpen} besoin={selectedBesoin} token={token} apiGet={apiGet} apiSend={apiSend} currentUserId={currentUserId} onClose={closeOfferModal}
           onOfferAdded={(besoinId) => {
             setPublicBesoins((prev) => prev.map((b) => b._id === besoinId ? { ...b, offersCount: (b.offersCount ?? 0) + 1 } : b));
             setBesoins((prev) => prev.map((b) => b._id === besoinId ? { ...b, offersCount: (b.offersCount ?? 0) + 1 } : b));
@@ -396,6 +405,51 @@ export default function Profile() {
 
         <ChatModal open={chatOpen} onClose={closeChat} besoin={chatBesoin} offer={chatOffer} token={token} apiGet={apiGet} apiSend={apiSend} />
 
+        {/* ✅ MODALE SUPPRESSION DE COMPTE */}
+        {deleteOpen && (
+          <div className="modal-backdrop" onMouseDown={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }}>
+            <div className="modal-card" onMouseDown={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+              <div className="modal-head">
+                <div>
+                  <div className="modal-title" style={{ color: "#ff6b6b" }}>🗑️ Supprimer mon compte</div>
+                  <div className="modal-sub">Cette action est irréversible. Toutes tes données seront supprimées.</div>
+                </div>
+                <button className="btn-ghost" type="button" onClick={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }}>✕</button>
+              </div>
+
+              <div style={{ margin: "16px 0", padding: "14px", borderRadius: 14, background: "rgba(255,80,80,0.08)", border: "1px solid rgba(255,80,80,0.25)", fontSize: 13 }}>
+                ⚠️ Seront supprimés définitivement : ton profil, tes annonces, tes besoins, tes étoiles, tes favoris et tes notifications.
+              </div>
+
+              {deleteError && <div className="modal-error">{deleteError}</div>}
+
+              <label className="modal-label">Confirme avec ton mot de passe</label>
+              <input
+                type="password"
+                placeholder="Ton mot de passe actuel"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                style={{ ...inputStyle, width: "100%", marginTop: 8 }}
+              />
+
+              <div className="modal-actions">
+                <button className="btn-ghost" type="button" onClick={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }} disabled={deleteLoading}>
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  disabled={deleteLoading || !deletePassword}
+                  style={{ background: "linear-gradient(90deg, #ff4d6d, #c9184a)", border: "none", borderRadius: 999, padding: "10px 16px", color: "white", fontWeight: 800, cursor: "pointer", fontSize: 13, opacity: deleteLoading || !deletePassword ? 0.5 : 1 }}
+                >
+                  {deleteLoading ? "Suppression…" : "🗑️ Supprimer définitivement"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODALE EDIT PROFILE */}
         {editProfileOpen && (
           <div className="modal-backdrop" onMouseDown={() => setEditProfileOpen(false)}>
             <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>
@@ -416,6 +470,29 @@ export default function Profile() {
               <input value={pfTopSkills} onChange={(e) => setPfTopSkills(e.target.value)} placeholder="Ex: React, Organisation, Communication" style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("summary")}</label>
               <textarea value={pfSummary} onChange={(e) => setPfSummary(e.target.value)} placeholder={t("summary_text")} style={{ ...inputStyle, width: "100%", marginTop: 8, minHeight: 110, resize: "vertical" }} />
+
+              {/* ✅ Zone suppression de compte */}
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,80,80,0.2)" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "rgba(255,120,120,0.9)", marginBottom: 8 }}>
+                  Zone de danger
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setEditProfileOpen(false); setDeleteOpen(true); }}
+                  style={{
+                    width: "100%", padding: "10px 14px",
+                    borderRadius: 14, cursor: "pointer",
+                    background: "rgba(255,80,80,0.08)",
+                    border: "1px solid rgba(255,80,80,0.3)",
+                    color: "rgba(255,120,120,0.9)",
+                    fontWeight: 800, fontSize: 13,
+                    textAlign: "left",
+                  }}
+                >
+                  🗑️ Supprimer mon compte définitivement
+                </button>
+              </div>
+
               <div className="modal-actions">
                 <button className="btn-ghost" type="button" onClick={() => setEditProfileOpen(false)} disabled={pfSaving}>{t("cancel")}</button>
                 <button className="btn-primary" type="button" onClick={saveProfile} disabled={pfSaving}>{pfSaving ? t("saving") : t("save")}</button>
