@@ -151,8 +151,9 @@ export default function Profile() {
     } catch (e) { setError(e?.message || String(e)); }
   };
 
-  // ✅ Supprimer besoin
-  const deleteBesoin = async (id) => {
+  // ✅ Supprimer besoin (accepte objet ou id)
+  const deleteBesoin = async (besoinOrId) => {
+    const id = typeof besoinOrId === "object" ? besoinOrId._id : besoinOrId;
     if (!id || !confirm(t("confirm_delete"))) return;
     try {
       setError("");
