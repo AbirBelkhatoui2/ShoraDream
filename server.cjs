@@ -1,4 +1,4 @@
-// server.cjs — COMPLET avec likes + commentaires
+// server.cjs — COMPLET avec Cloudinary pour les images
 
 require("dotenv").config();
 const express    = require("express");
@@ -11,15 +11,23 @@ const multer     = require("multer");
 const path       = require("path");
 const fs         = require("fs");
 const nodemailer = require("nodemailer");
+const cloudinary = require("cloudinary").v2;
+const { Readable } = require("stream");
 
 const app = express();
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, crossOriginEmbedderPolicy: false }));
 app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
 app.use(express.json());
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 const PORT   = process.env.PORT   || 3001;
 const SECRET = process.env.JWT_SECRET || "SECRET_KEY_TEST";
+
+// ✅ Cloudinary config
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "dcjategcd",
+  api_key:    process.env.CLOUDINARY_API_KEY    || "895151768939327",
+  api_secret: process.env.CLOUDINARY_API_SECRET || "ZMHfYfirj56aQSbJdd7hnrXFeJo",
+});
 
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("✅ MongoDB connecté"))
@@ -33,25 +41,42 @@ const transporter = nodemailer.createTransport({
 const resetCodes    = new Map();
 const registerCodes = new Map();
 
-const UPLOADS_ROOT = path.join(__dirname, "uploads");
-const IMG_DIR      = path.join(UPLOADS_ROOT, "images");
-if (!fs.existsSync(UPLOADS_ROOT)) fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
-if (!fs.existsSync(IMG_DIR))      fs.mkdirSync(IMG_DIR,      { recursive: true });
-
-const imageStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, IMG_DIR),
-  filename:    (req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase() || ".jpg";
-    cb(null, Date.now() + "-" + Math.round(Math.random() * 1e6) + ext);
-  },
-});
+// ✅ Multer en mémoire (pas de stockage local)
 const uploadImage = multer({
-  storage: imageStorage, limits: { fileSize: 5 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!["image/jpeg","image/png","image/webp"].includes(file.mimetype)) return cb(new Error("Format non autorisé."), false);
+    if (!["image/jpeg","image/png","image/webp"].includes(file.mimetype))
+      return cb(new Error("Format non autorisé."), false);
     cb(null, true);
   },
 });
+
+// ✅ Upload vers Cloudinary
+async function uploadToCloudinary(buffer, folder = "shoradream") {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: "image" },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result.secure_url);
+      }
+    );
+    Readable.from(buffer).pipe(stream);
+  });
+}
+
+// ✅ Supprimer une image Cloudinary
+async function deleteFromCloudinary(url) {
+  if (!url || !url.includes("cloudinary.com")) return;
+  try {
+    const parts = url.split("/");
+    const filename = parts[parts.length - 1].split(".")[0];
+    const folder   = parts[parts.length - 2];
+    const publicId = `${folder}/${filename}`;
+    await cloudinary.uploader.destroy(publicId);
+  } catch {}
+}
 
 //////////////////////////////////////////////////////
 // MODELS
@@ -104,17 +129,6 @@ const besoinSchema = new mongoose.Schema({
   likedBy:         { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
 }, { timestamps: true });
 
-// ✅ MODÈLE COMMENTAIRE
-const commentSchema = new mongoose.Schema({
-  targetType:  { type: String, enum: ["annonce","besoin","star"], required: true, index: true },
-  targetId:    { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
-  author:      { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  authorName:  { type: String, default: "Utilisateur" },
-  authorAvatar:{ type: String, default: "" },
-  text:        { type: String, required: true, trim: true, maxlength: 500 },
-}, { timestamps: true });
-commentSchema.index({ targetType: 1, targetId: 1, createdAt: 1 });
-
 const offerSchema = new mongoose.Schema({
   besoinId:   { type: mongoose.Schema.Types.ObjectId, ref: "Besoin", required: true, index: true },
   author:     { type: mongoose.Schema.Types.ObjectId, ref: "User",   required: true, index: true },
@@ -164,7 +178,6 @@ const User         = mongoose.model("User",         userSchema);
 const Star         = mongoose.model("Star",         starSchema);
 const Annonce      = mongoose.model("Annonce",      annonceSchema);
 const Besoin       = mongoose.model("Besoin",       besoinSchema);
-const Comment      = mongoose.model("Comment",      commentSchema);
 const Offer        = mongoose.model("Offer",        offerSchema);
 const ChatMessage  = mongoose.model("ChatMessage",  messageSchema);
 const Favorite     = mongoose.model("Favorite",     favoriteSchema);
@@ -198,20 +211,6 @@ function rateLimit({ windowMs = 10_000, max = 12 } = {}) {
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
 
 function isOid(v) { return typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v); }
-
-function safeUnlink(p) {
-  if (!p || typeof p !== "string") return;
-  const c = p.split("?")[0];
-  if (!c.startsWith("/uploads/")) return;
-  fs.unlink(path.join(__dirname, "uploads", c.replace("/uploads/", "")), () => {});
-}
-
-function parseKeep(v) {
-  if (!v) return [];
-  if (Array.isArray(v)) return v.filter(Boolean);
-  try { const a = JSON.parse(v); return Array.isArray(a) ? a.filter(Boolean) : []; } catch { return []; }
-}
-
 function san(v, max = 200000) {
   const s = String(v ?? "").replace(/\0/g, "").trim();
   return s.length > max ? s.slice(0, max) : s;
@@ -273,92 +272,6 @@ app.get("/users/:id/stars", auth, async (req, res) => {
 });
 
 //////////////////////////////////////////////////////
-// ✅ COMMENTAIRES
-//////////////////////////////////////////////////////
-
-// GET commentaires d'un item
-app.get("/comments/:type/:id", auth, async (req, res) => {
-  try {
-    const { type, id } = req.params;
-    if (!["annonce","besoin","star"].includes(type)) return res.status(400).json({ message: "Type invalide" });
-    if (!isOid(id)) return res.status(400).json({ message: "ID invalide" });
-    const items = await Comment.find({ targetType: type, targetId: id }).sort({ createdAt: 1 }).limit(100).lean();
-    res.json({ items });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
-});
-
-// POST nouveau commentaire
-app.post("/comments/:type/:id", auth, rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
-  try {
-    const { type, id } = req.params;
-    if (!["annonce","besoin","star"].includes(type)) return res.status(400).json({ message: "Type invalide" });
-    if (!isOid(id)) return res.status(400).json({ message: "ID invalide" });
-    const text = san(req.body?.text || "", 500);
-    if (!text) return res.status(400).json({ message: "Commentaire vide" });
-    if (text.length > 500) return res.status(400).json({ message: "Trop long (max 500 caractères)" });
-
-    // Vérifier que l'item existe et récupérer le propriétaire
-    let doc;
-    if (type === "annonce") doc = await Annonce.findById(id).lean();
-    else if (type === "besoin") doc = await Besoin.findById(id).lean();
-    else doc = await Star.findById(id).lean();
-    if (!doc) return res.status(404).json({ message: "Publication introuvable" });
-
-    // Récupérer l'avatar de l'auteur
-    const authorUser = await User.findById(req.user.id).lean();
-
-    const comment = await Comment.create({
-      targetType: type,
-      targetId: id,
-      author: req.user.id,
-      authorName: req.user?.name || "Utilisateur",
-      authorAvatar: authorUser?.avatar || "",
-      text,
-    });
-
-    // Notifier le propriétaire si ce n'est pas lui qui commente
-    if (String(doc.owner) !== String(req.user.id)) {
-      await Notification.create({
-        to: doc.owner,
-        from: req.user.id,
-        fromName: req.user?.name || "Utilisateur",
-        type: "comment",
-        targetId: doc._id,
-        targetTitle: doc.title || "",
-        message: `${req.user?.name || "Quelqu'un"} a commenté votre publication`,
-      }).catch(() => {});
-    }
-
-    res.status(201).json({ item: comment });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
-});
-
-// DELETE commentaire (auteur ou propriétaire de la publication)
-app.delete("/comments/:commentId", auth, async (req, res) => {
-  try {
-    const { commentId } = req.params;
-    if (!isOid(commentId)) return res.status(400).json({ message: "ID invalide" });
-    const comment = await Comment.findById(commentId).lean();
-    if (!comment) return res.status(404).json({ message: "Commentaire introuvable" });
-
-    // Vérifier droits : auteur du commentaire OU propriétaire de la publication
-    const isAuthor = String(comment.author) === String(req.user.id);
-    let isOwner = false;
-    if (!isAuthor) {
-      let doc;
-      if (comment.targetType === "annonce") doc = await Annonce.findById(comment.targetId).lean();
-      else if (comment.targetType === "besoin") doc = await Besoin.findById(comment.targetId).lean();
-      else doc = await Star.findById(comment.targetId).lean();
-      if (doc && String(doc.owner) === String(req.user.id)) isOwner = true;
-    }
-
-    if (!isAuthor && !isOwner) return res.status(403).json({ message: "Accès refusé" });
-    await Comment.deleteOne({ _id: commentId });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
-});
-
-//////////////////////////////////////////////////////
 // LIKES
 //////////////////////////////////////////////////////
 app.post("/like/:type/:id", auth, async (req, res) => {
@@ -367,13 +280,11 @@ app.post("/like/:type/:id", auth, async (req, res) => {
     if (!isOid(id)) return res.status(400).json({ message: "ID invalide" });
     const uid = new mongoose.Types.ObjectId(req.user.id);
     let doc, liked, count;
-
     const toggle = (arr, val) => {
       const idx = arr.findIndex(x => String(x) === String(val));
       if (idx >= 0) { arr.splice(idx, 1); return false; }
       arr.push(val); return true;
     };
-
     if (type === "annonce") {
       doc = await Annonce.findById(id);
       if (!doc) return res.status(404).json({ message: "Introuvable" });
@@ -381,7 +292,6 @@ app.post("/like/:type/:id", auth, async (req, res) => {
       liked = toggle(doc.likedBy, uid);
       doc.stars = doc.likedBy.length;
       await doc.save(); count = doc.stars;
-
     } else if (type === "besoin") {
       doc = await Besoin.findById(id);
       if (!doc) return res.status(404).json({ message: "Introuvable" });
@@ -389,7 +299,6 @@ app.post("/like/:type/:id", auth, async (req, res) => {
       liked = toggle(doc.likedBy, uid);
       doc.likes = doc.likedBy.length;
       await doc.save(); count = doc.likes;
-
     } else if (type === "star") {
       doc = await Star.findById(id);
       if (!doc) return res.status(404).json({ message: "Introuvable" });
@@ -397,9 +306,7 @@ app.post("/like/:type/:id", auth, async (req, res) => {
       liked = toggle(doc.likedBy, uid);
       doc.likes = doc.likedBy.length;
       await doc.save(); count = doc.likes;
-
     } else return res.status(400).json({ message: "Type invalide" });
-
     if (liked && String(doc.owner) !== String(req.user.id)) {
       await Notification.create({ to: doc.owner, from: req.user.id, fromName: req.user?.name||"Utilisateur", type: "like", targetId: doc._id, targetTitle: doc.title||"", message: `${req.user?.name||"Quelqu'un"} a aimé votre publication` }).catch(()=>{});
     }
@@ -465,7 +372,7 @@ app.post("/register", loginLimiter, async (req, res) => {
 //////////////////////////////////////////////////////
 app.post("/login", loginLimiter, async (req, res) => {
   try {
-    const email    = san(req.body?.email||"").toLowerCase();
+    const email    = san(req.body?.email   ||"").toLowerCase();
     const password = String(req.body?.password||"");
     if (!email||!password) return res.status(400).json({ message: "Champs manquants" });
     const user = await User.findOne({ email });
@@ -520,8 +427,7 @@ app.put("/users/me", auth, async (req, res) => {
     const raw = req.body?.topSkills;
     if (Array.isArray(raw)) topSkills = raw.map(x=>san(x)).filter(Boolean).slice(0,20);
     else if (typeof raw === "string") topSkills = raw.split(",").map(x=>x.trim()).filter(Boolean).slice(0,20);
-    if (!name)  return res.status(400).json({ message: "Nom obligatoire" });
-    if (!email) return res.status(400).json({ message: "Email obligatoire" });
+    if (!name||!email) return res.status(400).json({ message: "Champs obligatoires manquants" });
     if (await User.findOne({ email, _id: { $ne: req.user.id } }).lean()) return res.status(400).json({ message: "Email déjà utilisé" });
     if (await User.findOne({ name,  _id: { $ne: req.user.id } }).lean()) return res.status(400).json({ message: "Nom déjà utilisé" });
     const u = await User.findById(req.user.id);
@@ -540,14 +446,14 @@ app.delete("/users/me/delete", auth, async (req, res) => {
     if (!user||!(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: "Mot de passe incorrect" });
     const uid = req.user.id;
     const [al,bl,sl] = await Promise.all([Annonce.find({owner:uid}).lean(), Besoin.find({owner:uid}).lean(), Star.find({owner:uid}).lean()]);
-    al.forEach(a=>(a.images||[]).forEach(safeUnlink));
-    bl.forEach(b=>(b.images||[]).forEach(safeUnlink));
-    sl.forEach(s=>(s.images||[]).forEach(safeUnlink));
-    if (user.avatar) safeUnlink(user.avatar);
+    for (const a of al) for (const img of (a.images||[])) await deleteFromCloudinary(img);
+    for (const b of bl) for (const img of (b.images||[])) await deleteFromCloudinary(img);
+    for (const s of sl) for (const img of (s.images||[])) await deleteFromCloudinary(img);
+    if (user.avatar) await deleteFromCloudinary(user.avatar);
     await Promise.all([
       Annonce.deleteMany({owner:uid}), Besoin.deleteMany({owner:uid}), Star.deleteMany({owner:uid}),
       Offer.deleteMany({author:uid}), ChatMessage.deleteMany({author:uid}),
-      Favorite.deleteMany({owner:uid}), Comment.deleteMany({author:uid}),
+      Favorite.deleteMany({owner:uid}),
       Notification.deleteMany({$or:[{to:uid},{from:uid}]}),
       Report.deleteMany({$or:[{reporter:uid},{reported:uid}]}),
       User.deleteOne({_id:uid}),
@@ -556,16 +462,18 @@ app.delete("/users/me/delete", auth, async (req, res) => {
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
+// ✅ Upload avatar → Cloudinary
 app.post("/users/avatar", auth, uploadImage.single("avatar"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "Image manquante" });
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "Introuvable" });
-    if (user.avatar) safeUnlink(user.avatar);
-    user.avatar = "/uploads/images/" + req.file.filename;
+    if (user.avatar) await deleteFromCloudinary(user.avatar);
+    const url = await uploadToCloudinary(req.file.buffer, "shoradream/avatars");
+    user.avatar = url;
     await user.save();
-    res.json({ avatar: user.avatar });
-  } catch (e) { res.status(500).json({ message: "Erreur upload" }); }
+    res.json({ avatar: url });
+  } catch (e) { res.status(500).json({ message: e?.message || "Erreur upload" }); }
 });
 
 app.post("/users/:id/report", auth, async (req, res) => {
@@ -594,21 +502,25 @@ app.get("/stars", auth, async (req, res) => {
   try { res.json({ items: withLikes(await Star.find({ owner: { $ne: req.user.id } }).sort({ createdAt: -1 }).limit(50).lean(), req.user.id) }); }
   catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
+// ✅ Créer étoile → Cloudinary
 app.post("/stars", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     const title = san(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const c = await Star.create({ owner: req.user.id, title, images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4), likes: 0, likedBy: [] });
-    res.status(201).json({ item: c });
+    const images = await Promise.all((req.files||[]).slice(0,4).map(f => uploadToCloudinary(f.buffer, "shoradream/stars")));
+    const created = await Star.create({ owner: req.user.id, title, images, likes: 0, likedBy: [] });
+    res.status(201).json({ item: created });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.delete("/stars/:id", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Star.findById(req.params.id);
     if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
-    (item.images||[]).forEach(safeUnlink);
-    await Promise.all([Star.deleteOne({_id:req.params.id}), Comment.deleteMany({targetType:"star",targetId:req.params.id})]);
+    for (const img of (item.images||[])) await deleteFromCloudinary(img);
+    await Star.deleteOne({ _id: req.params.id });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -624,36 +536,47 @@ app.get("/annonces", auth, async (req, res) => {
   try { res.json({ items: withLikes(await Annonce.find({ owner: { $ne: req.user.id } }).sort({ createdAt: -1 }).limit(50).populate("owner","name avatar location").lean(), req.user.id) }); }
   catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
+// ✅ Créer annonce → Cloudinary
 app.post("/annonces", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     const title = san(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const c = await Annonce.create({ owner: req.user.id, title, description: san(req.body?.description), location: san(req.body?.location), stars: 0, likedBy: [], status: String(req.body?.status||"active"), images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4) });
-    res.status(201).json({ item: c });
+    const images = await Promise.all((req.files||[]).slice(0,4).map(f => uploadToCloudinary(f.buffer, "shoradream/annonces")));
+    const created = await Annonce.create({ owner: req.user.id, title, description: san(req.body?.description), location: san(req.body?.location), stars: 0, likedBy: [], status: String(req.body?.status||"active"), images });
+    res.status(201).json({ item: created });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.put("/annonces/:id", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Annonce.findById(req.params.id);
     if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
-    const keep = parseKeep(req.body?.keepImages);
-    (item.images||[]).filter(i=>!keep.includes(i)).forEach(safeUnlink);
-    item.images = [...keep, ...(req.files||[]).map(f=>"/uploads/images/"+f.filename)].slice(0,4);
+    let keepImages = [];
+    const raw = req.body?.keepImages;
+    if (Array.isArray(raw)) keepImages = raw.filter(Boolean);
+    else if (typeof raw === "string") { try { keepImages = JSON.parse(raw).filter(Boolean); } catch { keepImages = []; } }
+    const toDelete = (item.images||[]).filter(img => !keepImages.includes(img));
+    for (const img of toDelete) await deleteFromCloudinary(img);
+    const newImages = await Promise.all((req.files||[]).slice(0,4).map(f => uploadToCloudinary(f.buffer, "shoradream/annonces")));
+    item.images = [...keepImages, ...newImages].slice(0,4);
     if (req.body?.title!=null) item.title=san(req.body.title)||item.title;
     if (req.body?.description!=null) item.description=san(req.body.description);
     if (req.body?.location!=null) item.location=san(req.body.location);
     if (req.body?.status!=null) item.status=String(req.body.status);
-    await item.save(); res.json({ item });
+    await item.save();
+    res.json({ item });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.delete("/annonces/:id", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Annonce.findById(req.params.id);
     if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
-    (item.images||[]).forEach(safeUnlink);
-    await Promise.all([Annonce.deleteOne({_id:req.params.id}), Comment.deleteMany({targetType:"annonce",targetId:req.params.id})]);
+    for (const img of (item.images||[])) await deleteFromCloudinary(img);
+    await Annonce.deleteOne({ _id: req.params.id });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -674,6 +597,7 @@ app.get("/besoins/mine", auth, async (req, res) => {
     res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.get("/besoins", auth, async (req, res) => {
   try {
     const myId = new mongoose.Types.ObjectId(req.user.id);
@@ -692,46 +616,59 @@ app.get("/besoins", auth, async (req, res) => {
     res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
+// ✅ Créer besoin → Cloudinary
 app.post("/besoins", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     const title = san(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const c = await Besoin.create({ owner: req.user.id, title, description: san(req.body?.description), category: san(req.body?.category||"general"), location: san(req.body?.location), priority: String(req.body?.priority||"medium"), status: String(req.body?.status||"open"), images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4), likes: 0, likedBy: [] });
-    res.status(201).json({ item: c });
+    const images = await Promise.all((req.files||[]).slice(0,4).map(f => uploadToCloudinary(f.buffer, "shoradream/besoins")));
+    const created = await Besoin.create({ owner: req.user.id, title, description: san(req.body?.description), category: san(req.body?.category||"general"), location: san(req.body?.location), priority: String(req.body?.priority||"medium"), status: String(req.body?.status||"open"), images, likes: 0, likedBy: [] });
+    res.status(201).json({ item: created });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.put("/besoins/:id", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Besoin.findById(req.params.id);
     if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
-    const keep = parseKeep(req.body?.keepImages);
-    (item.images||[]).filter(i=>!keep.includes(i)).forEach(safeUnlink);
-    item.images = [...keep, ...(req.files||[]).map(f=>"/uploads/images/"+f.filename)].slice(0,4);
+    let keepImages = [];
+    const raw = req.body?.keepImages;
+    if (Array.isArray(raw)) keepImages = raw.filter(Boolean);
+    else if (typeof raw === "string") { try { keepImages = JSON.parse(raw).filter(Boolean); } catch { keepImages = []; } }
+    const toDelete = (item.images||[]).filter(img => !keepImages.includes(img));
+    for (const img of toDelete) await deleteFromCloudinary(img);
+    const newImages = await Promise.all((req.files||[]).slice(0,4).map(f => uploadToCloudinary(f.buffer, "shoradream/besoins")));
+    item.images = [...keepImages, ...newImages].slice(0,4);
     if (req.body?.title!=null) item.title=san(req.body.title)||item.title;
     if (req.body?.description!=null) item.description=san(req.body.description);
     if (req.body?.category!=null) item.category=san(req.body.category);
     if (req.body?.location!=null) item.location=san(req.body.location);
     if (req.body?.priority!=null) item.priority=String(req.body.priority);
     if (req.body?.status!=null) item.status=String(req.body.status);
-    await item.save(); res.json({ item });
+    await item.save();
+    res.json({ item });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.post("/besoins/:id/close", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const b = await Besoin.findById(req.params.id);
     if (!b||String(b.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
-    b.status = "closed"; await b.save(); res.json({ ok: true, item: b });
+    b.status = "closed"; await b.save();
+    res.json({ ok: true, item: b });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.delete("/besoins/:id", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Besoin.findById(req.params.id);
     if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
-    (item.images||[]).forEach(safeUnlink);
-    await Promise.all([Offer.deleteMany({besoinId:req.params.id}), ChatMessage.deleteMany({besoinId:req.params.id}), Favorite.deleteMany({targetType:"besoin",targetId:req.params.id}), Comment.deleteMany({targetType:"besoin",targetId:req.params.id}), Besoin.deleteOne({_id:req.params.id})]);
+    for (const img of (item.images||[])) await deleteFromCloudinary(img);
+    await Promise.all([Offer.deleteMany({besoinId:req.params.id}), ChatMessage.deleteMany({besoinId:req.params.id}), Favorite.deleteMany({targetType:"besoin",targetId:req.params.id}), Besoin.deleteOne({_id:req.params.id})]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -745,6 +682,8 @@ app.get("/besoins/:id/offers", auth, async (req, res) => {
     res.json({ items: await Offer.find({ besoinId: req.params.id }).sort({ createdAt: -1 }).lean() });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
+// ✅ Créer offre → Cloudinary
 app.post("/besoins/:id/offers", auth, uploadImage.single("image"), async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
@@ -754,29 +693,33 @@ app.post("/besoins/:id/offers", auth, uploadImage.single("image"), async (req, r
     if (!besoin) return res.status(404).json({ message: "Introuvable" });
     if (besoin.status !== "open") return res.status(400).json({ message: "Besoin non ouvert" });
     if (String(besoin.owner)===String(req.user.id)) return res.status(400).json({ message: "Tu ne peux pas proposer sur ton propre besoin" });
-    const item = await Offer.create({ besoinId: req.params.id, author: req.user.id, authorName: req.user?.name||"Utilisateur", message, image: req.file?"/uploads/images/"+req.file.filename:"", accepted: false });
+    let image = "";
+    if (req.file) image = await uploadToCloudinary(req.file.buffer, "shoradream/offers");
+    const item = await Offer.create({ besoinId: req.params.id, author: req.user.id, authorName: req.user?.name||"Utilisateur", message, image, accepted: false });
     await Notification.create({ to: besoin.owner, from: req.user.id, fromName: req.user?.name||"Utilisateur", type: "offer", targetId: besoin._id, targetTitle: besoin.title, message: `${req.user?.name||"Quelqu'un"} a proposé son aide` }).catch(()=>{});
     res.status(201).json({ item });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.delete("/offers/:offerId", auth, async (req, res) => {
   try {
     if (!isOid(req.params.offerId)) return res.status(400).json({ message: "ID invalide" });
-    const offer = await Offer.findById(req.params.offerId).lean();
-    if (!offer) return res.status(404).json({ message: "Introuvable" });
+    const offer  = await Offer.findById(req.params.offerId).lean();
+    if (!offer)  return res.status(404).json({ message: "Introuvable" });
     const besoin = await Besoin.findById(offer.besoinId).lean();
     if (String(offer.author)!==String(req.user.id)&&(!besoin||String(besoin.owner)!==String(req.user.id))) return res.status(403).json({ message: "Refusé" });
     if (offer.accepted) return res.status(400).json({ message: "Offre déjà acceptée" });
-    if (offer.image) safeUnlink(offer.image);
+    if (offer.image) await deleteFromCloudinary(offer.image);
     await Offer.deleteOne({ _id: req.params.offerId });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.post("/offers/:offerId/accept", auth, async (req, res) => {
   try {
     if (!isOid(req.params.offerId)) return res.status(400).json({ message: "ID invalide" });
-    const offer = await Offer.findById(req.params.offerId).lean();
-    if (!offer) return res.status(404).json({ message: "Introuvable" });
+    const offer  = await Offer.findById(req.params.offerId).lean();
+    if (!offer)  return res.status(404).json({ message: "Introuvable" });
     const besoin = await Besoin.findById(offer.besoinId);
     if (!besoin||String(besoin.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
     if (besoin.status!=="open") return res.status(400).json({ message: "Besoin non ouvert" });
@@ -836,6 +779,7 @@ app.get("/chat/:besoinId/messages", auth, rateLimit({ windowMs:10_000, max:20 })
     res.json({ items: await ChatMessage.find(q).sort({ createdAt: 1 }).limit(300).lean() });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.post("/chat/:besoinId/messages", auth, rateLimit({ windowMs:10_000, max:12 }), async (req, res) => {
   try {
     if (!isOid(req.params.besoinId)) return res.status(400).json({ message: "ID invalide" });
@@ -873,6 +817,7 @@ app.get("/favorites/mine", auth, async (req, res) => {
     res.json({ items: favs.map(f=>{ const d=f.targetType==="besoin"?mB.get(String(f.targetId)):f.targetType==="annonce"?mA.get(String(f.targetId)):mS.get(String(f.targetId)); return d?{...f,item:d}:null; }).filter(Boolean) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
+
 app.post("/favorites/toggle", auth, async (req, res) => {
   try {
     const tt=san(req.body?.targetType||""), ti=san(req.body?.targetId||"");
@@ -913,4 +858,7 @@ app.put("/notifications/:id/read", auth, async (req, res) => {
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
+//////////////////////////////////////////////////////
+// START
+//////////////////////////////////////////////////////
 app.listen(PORT, "0.0.0.0", () => console.log("✅ Backend http://0.0.0.0:" + PORT));
