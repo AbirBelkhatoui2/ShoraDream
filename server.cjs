@@ -1,4 +1,4 @@
-// server.cjs — COMPLET avec likes, signalement, suppression compte, vérification email
+// server.cjs — COMPLET avec likes + commentaires
 
 require("dotenv").config();
 const express    = require("express");
@@ -72,11 +72,11 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const starSchema = new mongoose.Schema({
-  owner:    { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
-  title:    { type: String, required: true, trim: true },
-  images:   { type: [String], default: [], validate: { validator: a => a.length <= 4, message: "Max 4 images" } },
-  likes:    { type: Number, default: 0, min: 0 },
-  likedBy:  { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
+  owner:   { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+  title:   { type: String, required: true, trim: true },
+  images:  { type: [String], default: [] },
+  likes:   { type: Number, default: 0, min: 0 },
+  likedBy: { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
 }, { timestamps: true });
 
 const annonceSchema = new mongoose.Schema({
@@ -87,7 +87,7 @@ const annonceSchema = new mongoose.Schema({
   stars:       { type: Number, default: 0, min: 0 },
   likedBy:     { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
   status:      { type: String, enum: ["active","pending","closed"], default: "active" },
-  images:      { type: [String], default: [], validate: { validator: a => a.length <= 4, message: "Max 4 images" } },
+  images:      { type: [String], default: [] },
 }, { timestamps: true });
 
 const besoinSchema = new mongoose.Schema({
@@ -99,10 +99,21 @@ const besoinSchema = new mongoose.Schema({
   priority:        { type: String, enum: ["low","medium","high"], default: "medium" },
   status:          { type: String, enum: ["open","closed","done"], default: "open" },
   acceptedOfferId: { type: mongoose.Schema.Types.ObjectId, ref: "Offer", default: null },
-  images:          { type: [String], default: [], validate: { validator: a => a.length <= 4, message: "Max 4 images" } },
+  images:          { type: [String], default: [] },
   likes:           { type: Number, default: 0, min: 0 },
   likedBy:         { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
 }, { timestamps: true });
+
+// ✅ MODÈLE COMMENTAIRE
+const commentSchema = new mongoose.Schema({
+  targetType:  { type: String, enum: ["annonce","besoin","star"], required: true, index: true },
+  targetId:    { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+  author:      { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  authorName:  { type: String, default: "Utilisateur" },
+  authorAvatar:{ type: String, default: "" },
+  text:        { type: String, required: true, trim: true, maxlength: 500 },
+}, { timestamps: true });
+commentSchema.index({ targetType: 1, targetId: 1, createdAt: 1 });
 
 const offerSchema = new mongoose.Schema({
   besoinId:   { type: mongoose.Schema.Types.ObjectId, ref: "Besoin", required: true, index: true },
@@ -131,7 +142,7 @@ const notificationSchema = new mongoose.Schema({
   to:          { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
   from:        { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   fromName:    { type: String, default: "Utilisateur" },
-  type:        { type: String, enum: ["offer","like","accepted","message","report"], required: true },
+  type:        { type: String, enum: ["offer","like","accepted","message","report","comment"], required: true },
   targetId:    { type: mongoose.Schema.Types.ObjectId, default: null },
   targetTitle: { type: String, default: "" },
   message:     { type: String, default: "" },
@@ -153,6 +164,7 @@ const User         = mongoose.model("User",         userSchema);
 const Star         = mongoose.model("Star",         starSchema);
 const Annonce      = mongoose.model("Annonce",      annonceSchema);
 const Besoin       = mongoose.model("Besoin",       besoinSchema);
+const Comment      = mongoose.model("Comment",      commentSchema);
 const Offer        = mongoose.model("Offer",        offerSchema);
 const ChatMessage  = mongoose.model("ChatMessage",  messageSchema);
 const Favorite     = mongoose.model("Favorite",     favoriteSchema);
@@ -213,6 +225,14 @@ async function canAccess(uid, besoinId) {
   return { ok: false, reason: "Accès refusé" };
 }
 
+function withLikes(items, uid) {
+  return items.map(x => ({
+    ...x,
+    likesCount: x.likedBy?.length || x.stars || x.likes || 0,
+    liked: (x.likedBy||[]).some(id => String(id) === String(uid)),
+  }));
+}
+
 //////////////////////////////////////////////////////
 // BASE
 //////////////////////////////////////////////////////
@@ -224,6 +244,7 @@ app.get("/ping",(_, res) => res.json({ ok: true }));
 //////////////////////////////////////////////////////
 app.get("/users/public/:id", async (req, res) => {
   try {
+    if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const u = await User.findById(req.params.id).lean();
     if (!u) return res.status(404).json({ message: "Introuvable" });
     res.json({ user: { id: u._id, firstName: u.firstName||"", name: u.name, avatar: u.avatar||"", phone: u.phone||"", location: u.location||"", topSkills: u.topSkills||[], summary: u.summary||"", reportCount: u.reportCount||0 } });
@@ -233,29 +254,112 @@ app.get("/users/public/:id", async (req, res) => {
 app.get("/users/:id/annonces", auth, async (req, res) => {
   try {
     const items = await Annonce.find({ owner: req.params.id }).sort({ createdAt: -1 }).limit(50).lean();
-    const uid = String(req.user.id);
-    res.json({ items: items.map(a => ({ ...a, likesCount: a.likedBy?.length || a.stars || 0, liked: (a.likedBy||[]).some(x => String(x) === uid) })) });
+    res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
 app.get("/users/:id/besoins", auth, async (req, res) => {
   try {
     const items = await Besoin.find({ owner: req.params.id }).sort({ createdAt: -1 }).limit(50).lean();
-    const uid = String(req.user.id);
-    res.json({ items: items.map(b => ({ ...b, likesCount: b.likes||0, liked: (b.likedBy||[]).some(x => String(x) === uid) })) });
+    res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
 app.get("/users/:id/stars", auth, async (req, res) => {
   try {
     const items = await Star.find({ owner: req.params.id }).sort({ createdAt: -1 }).limit(50).lean();
-    const uid = String(req.user.id);
-    res.json({ items: items.map(s => ({ ...s, likesCount: s.likes||0, liked: (s.likedBy||[]).some(x => String(x) === uid) })) });
+    res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
 //////////////////////////////////////////////////////
-// ✅ LIKES (toggle étoile)
+// ✅ COMMENTAIRES
+//////////////////////////////////////////////////////
+
+// GET commentaires d'un item
+app.get("/comments/:type/:id", auth, async (req, res) => {
+  try {
+    const { type, id } = req.params;
+    if (!["annonce","besoin","star"].includes(type)) return res.status(400).json({ message: "Type invalide" });
+    if (!isOid(id)) return res.status(400).json({ message: "ID invalide" });
+    const items = await Comment.find({ targetType: type, targetId: id }).sort({ createdAt: 1 }).limit(100).lean();
+    res.json({ items });
+  } catch (e) { res.status(500).json({ message: e?.message }); }
+});
+
+// POST nouveau commentaire
+app.post("/comments/:type/:id", auth, rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
+  try {
+    const { type, id } = req.params;
+    if (!["annonce","besoin","star"].includes(type)) return res.status(400).json({ message: "Type invalide" });
+    if (!isOid(id)) return res.status(400).json({ message: "ID invalide" });
+    const text = san(req.body?.text || "", 500);
+    if (!text) return res.status(400).json({ message: "Commentaire vide" });
+    if (text.length > 500) return res.status(400).json({ message: "Trop long (max 500 caractères)" });
+
+    // Vérifier que l'item existe et récupérer le propriétaire
+    let doc;
+    if (type === "annonce") doc = await Annonce.findById(id).lean();
+    else if (type === "besoin") doc = await Besoin.findById(id).lean();
+    else doc = await Star.findById(id).lean();
+    if (!doc) return res.status(404).json({ message: "Publication introuvable" });
+
+    // Récupérer l'avatar de l'auteur
+    const authorUser = await User.findById(req.user.id).lean();
+
+    const comment = await Comment.create({
+      targetType: type,
+      targetId: id,
+      author: req.user.id,
+      authorName: req.user?.name || "Utilisateur",
+      authorAvatar: authorUser?.avatar || "",
+      text,
+    });
+
+    // Notifier le propriétaire si ce n'est pas lui qui commente
+    if (String(doc.owner) !== String(req.user.id)) {
+      await Notification.create({
+        to: doc.owner,
+        from: req.user.id,
+        fromName: req.user?.name || "Utilisateur",
+        type: "comment",
+        targetId: doc._id,
+        targetTitle: doc.title || "",
+        message: `${req.user?.name || "Quelqu'un"} a commenté votre publication`,
+      }).catch(() => {});
+    }
+
+    res.status(201).json({ item: comment });
+  } catch (e) { res.status(500).json({ message: e?.message }); }
+});
+
+// DELETE commentaire (auteur ou propriétaire de la publication)
+app.delete("/comments/:commentId", auth, async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    if (!isOid(commentId)) return res.status(400).json({ message: "ID invalide" });
+    const comment = await Comment.findById(commentId).lean();
+    if (!comment) return res.status(404).json({ message: "Commentaire introuvable" });
+
+    // Vérifier droits : auteur du commentaire OU propriétaire de la publication
+    const isAuthor = String(comment.author) === String(req.user.id);
+    let isOwner = false;
+    if (!isAuthor) {
+      let doc;
+      if (comment.targetType === "annonce") doc = await Annonce.findById(comment.targetId).lean();
+      else if (comment.targetType === "besoin") doc = await Besoin.findById(comment.targetId).lean();
+      else doc = await Star.findById(comment.targetId).lean();
+      if (doc && String(doc.owner) === String(req.user.id)) isOwner = true;
+    }
+
+    if (!isAuthor && !isOwner) return res.status(403).json({ message: "Accès refusé" });
+    await Comment.deleteOne({ _id: commentId });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ message: e?.message }); }
+});
+
+//////////////////////////////////////////////////////
+// LIKES
 //////////////////////////////////////////////////////
 app.post("/like/:type/:id", auth, async (req, res) => {
   try {
@@ -264,42 +368,41 @@ app.post("/like/:type/:id", auth, async (req, res) => {
     const uid = new mongoose.Types.ObjectId(req.user.id);
     let doc, liked, count;
 
+    const toggle = (arr, val) => {
+      const idx = arr.findIndex(x => String(x) === String(val));
+      if (idx >= 0) { arr.splice(idx, 1); return false; }
+      arr.push(val); return true;
+    };
+
     if (type === "annonce") {
       doc = await Annonce.findById(id);
       if (!doc) return res.status(404).json({ message: "Introuvable" });
-      const idx = (doc.likedBy||[]).findIndex(x => String(x) === String(uid));
-      if (idx >= 0) { doc.likedBy.splice(idx, 1); doc.stars = Math.max(0, (doc.stars||0) - 1); liked = false; }
-      else          { doc.likedBy.push(uid);       doc.stars = (doc.stars||0) + 1;               liked = true; }
-      await doc.save();
-      count = doc.stars;
+      doc.likedBy = doc.likedBy || [];
+      liked = toggle(doc.likedBy, uid);
+      doc.stars = doc.likedBy.length;
+      await doc.save(); count = doc.stars;
 
     } else if (type === "besoin") {
       doc = await Besoin.findById(id);
       if (!doc) return res.status(404).json({ message: "Introuvable" });
-      const idx = (doc.likedBy||[]).findIndex(x => String(x) === String(uid));
-      if (idx >= 0) { doc.likedBy.splice(idx, 1); doc.likes = Math.max(0, (doc.likes||0) - 1); liked = false; }
-      else          { doc.likedBy.push(uid);       doc.likes = (doc.likes||0) + 1;               liked = true; }
-      await doc.save();
-      count = doc.likes;
+      doc.likedBy = doc.likedBy || [];
+      liked = toggle(doc.likedBy, uid);
+      doc.likes = doc.likedBy.length;
+      await doc.save(); count = doc.likes;
 
     } else if (type === "star") {
       doc = await Star.findById(id);
       if (!doc) return res.status(404).json({ message: "Introuvable" });
-      const idx = (doc.likedBy||[]).findIndex(x => String(x) === String(uid));
-      if (idx >= 0) { doc.likedBy.splice(idx, 1); doc.likes = Math.max(0, (doc.likes||0) - 1); liked = false; }
-      else          { doc.likedBy.push(uid);       doc.likes = (doc.likes||0) + 1;               liked = true; }
-      await doc.save();
-      count = doc.likes;
+      doc.likedBy = doc.likedBy || [];
+      liked = toggle(doc.likedBy, uid);
+      doc.likes = doc.likedBy.length;
+      await doc.save(); count = doc.likes;
 
-    } else {
-      return res.status(400).json({ message: "Type invalide" });
-    }
+    } else return res.status(400).json({ message: "Type invalide" });
 
-    // Notifier le propriétaire si like
     if (liked && String(doc.owner) !== String(req.user.id)) {
       await Notification.create({ to: doc.owner, from: req.user.id, fromName: req.user?.name||"Utilisateur", type: "like", targetId: doc._id, targetTitle: doc.title||"", message: `${req.user?.name||"Quelqu'un"} a aimé votre publication` }).catch(()=>{});
     }
-
     res.json({ ok: true, liked, count });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -320,14 +423,14 @@ app.post("/register/send-code", loginLimiter, async (req, res) => {
       html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:28px;background:#050b2e;color:white;border-radius:18px"><h2 style="color:#8B5CF6;margin:0 0 16px">✨ ShoraDream</h2><p>Ton code :</p><div style="font-size:44px;font-weight:900;letter-spacing:10px;text-align:center;padding:24px;background:rgba(139,92,246,0.15);border:2px solid rgba(139,92,246,0.4);border-radius:16px;color:#a78bfa;margin:20px 0">${code}</div><p style="color:rgba(255,255,255,0.6);font-size:13px">Expire dans <strong style="color:white">10 minutes</strong>.</p></div>`,
     });
     res.json({ message: "Code envoyé ! Vérifie ta boîte mail 📧" });
-  } catch (e) { console.error(e); res.status(500).json({ message: e?.message }); }
+  } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
 app.post("/register/verify-code", async (req, res) => {
   try {
     const email = san(req.body?.email||"").toLowerCase();
     const code  = san(req.body?.code ||"");
-    if (!email || !code) return res.status(400).json({ message: "Champs manquants" });
+    if (!email||!code) return res.status(400).json({ message: "Champs manquants" });
     const stored = registerCodes.get(email);
     if (!stored) return res.status(400).json({ message: "Aucun code demandé" });
     if (Date.now() > stored.expiresAt) { registerCodes.delete(email); return res.status(400).json({ message: "Code expiré" }); }
@@ -354,7 +457,7 @@ app.post("/register", loginLimiter, async (req, res) => {
     const u = await User.create({ firstName, name, email, phone, location, password: await bcrypt.hash(password, 10), topSkills: [], summary: "" });
     registerCodes.delete(email);
     res.json({ message: "Compte créé !", user: { id: u._id, firstName: u.firstName||"", name: u.name, email: u.email, phone: u.phone||"", location: u.location||"", avatar: u.avatar||"", topSkills: [], summary: "" } });
-  } catch (e) { console.error(e); res.status(500).json({ message: e?.message }); }
+  } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
 //////////////////////////////////////////////////////
@@ -362,19 +465,16 @@ app.post("/register", loginLimiter, async (req, res) => {
 //////////////////////////////////////////////////////
 app.post("/login", loginLimiter, async (req, res) => {
   try {
-    const email    = san(req.body?.email   ||"").toLowerCase();
+    const email    = san(req.body?.email||"").toLowerCase();
     const password = String(req.body?.password||"");
     if (!email||!password) return res.status(400).json({ message: "Champs manquants" });
     const user = await User.findOne({ email });
-    if (!user || !(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: "Identifiants incorrects" });
+    if (!user||!(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: "Identifiants incorrects" });
     const token = jwt.sign({ id: user._id, name: user.name }, SECRET, { expiresIn: "7d" });
     res.json({ token, user: { id: user._id, firstName: user.firstName||"", name: user.name, email: user.email, phone: user.phone||"", location: user.location||"", avatar: user.avatar||"", topSkills: user.topSkills||[], summary: user.summary||"" } });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
-//////////////////////////////////////////////////////
-// MOT DE PASSE OUBLIÉ
-//////////////////////////////////////////////////////
 app.post("/forgot-password", loginLimiter, async (req, res) => {
   try {
     const email = san(req.body?.email||"").toLowerCase();
@@ -437,26 +537,22 @@ app.delete("/users/me/delete", auth, async (req, res) => {
     const password = String(req.body?.password||"");
     if (!password) return res.status(400).json({ message: "Mot de passe requis" });
     const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "Introuvable" });
-    if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: "Mot de passe incorrect" });
+    if (!user||!(await bcrypt.compare(password, user.password))) return res.status(401).json({ message: "Mot de passe incorrect" });
     const uid = req.user.id;
-    const [al, bl, sl] = await Promise.all([Annonce.find({ owner: uid }).lean(), Besoin.find({ owner: uid }).lean(), Star.find({ owner: uid }).lean()]);
+    const [al,bl,sl] = await Promise.all([Annonce.find({owner:uid}).lean(), Besoin.find({owner:uid}).lean(), Star.find({owner:uid}).lean()]);
     al.forEach(a=>(a.images||[]).forEach(safeUnlink));
     bl.forEach(b=>(b.images||[]).forEach(safeUnlink));
     sl.forEach(s=>(s.images||[]).forEach(safeUnlink));
     if (user.avatar) safeUnlink(user.avatar);
     await Promise.all([
-      Annonce.deleteMany({ owner: uid }),
-      Besoin.deleteMany({ owner: uid }),
-      Star.deleteMany({ owner: uid }),
-      Offer.deleteMany({ author: uid }),
-      ChatMessage.deleteMany({ author: uid }),
-      Favorite.deleteMany({ owner: uid }),
-      Notification.deleteMany({ $or: [{ to: uid },{ from: uid }] }),
-      Report.deleteMany({ $or: [{ reporter: uid },{ reported: uid }] }),
-      User.deleteOne({ _id: uid }),
+      Annonce.deleteMany({owner:uid}), Besoin.deleteMany({owner:uid}), Star.deleteMany({owner:uid}),
+      Offer.deleteMany({author:uid}), ChatMessage.deleteMany({author:uid}),
+      Favorite.deleteMany({owner:uid}), Comment.deleteMany({author:uid}),
+      Notification.deleteMany({$or:[{to:uid},{from:uid}]}),
+      Report.deleteMany({$or:[{reporter:uid},{reported:uid}]}),
+      User.deleteOne({_id:uid}),
     ]);
-    res.json({ ok: true, message: "Compte supprimé" });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
@@ -474,16 +570,15 @@ app.post("/users/avatar", auth, uploadImage.single("avatar"), async (req, res) =
 
 app.post("/users/:id/report", auth, async (req, res) => {
   try {
-    const reportedId = req.params.id;
-    if (!isOid(reportedId)) return res.status(400).json({ message: "ID invalide" });
-    if (reportedId === String(req.user.id)) return res.status(400).json({ message: "Tu ne peux pas te signaler" });
+    const rid = req.params.id;
+    if (!isOid(rid)||rid===String(req.user.id)) return res.status(400).json({ message: "Invalide" });
     const reason = san(req.body?.reason||"");
     if (!reason) return res.status(400).json({ message: "Raison obligatoire" });
-    const reported = await User.findById(reportedId);
+    const reported = await User.findById(rid);
     if (!reported) return res.status(404).json({ message: "Introuvable" });
-    if (await Report.findOne({ reporter: req.user.id, reported: reportedId }).lean()) return res.status(400).json({ message: "Déjà signalé" });
-    await Report.create({ reporter: req.user.id, reported: reportedId, reason });
-    await User.updateOne({ _id: reportedId }, { $inc: { reportCount: 1 }, $addToSet: { reportedBy: req.user.id } });
+    if (await Report.findOne({ reporter: req.user.id, reported: rid }).lean()) return res.status(400).json({ message: "Déjà signalé" });
+    await Report.create({ reporter: req.user.id, reported: rid, reason });
+    await User.updateOne({ _id: rid }, { $inc: { reportCount: 1 }, $addToSet: { reportedBy: req.user.id } });
     res.json({ ok: true, message: "Signalement envoyé. Merci !" });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -492,38 +587,28 @@ app.post("/users/:id/report", auth, async (req, res) => {
 // STARS
 //////////////////////////////////////////////////////
 app.get("/stars/mine", auth, async (req, res) => {
-  try {
-    const uid = String(req.user.id);
-    const items = await Star.find({ owner: req.user.id }).sort({ createdAt: -1 }).lean();
-    res.json({ items: items.map(s => ({ ...s, likesCount: s.likes||0, liked: (s.likedBy||[]).some(x=>String(x)===uid) })) });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
+  try { res.json({ items: withLikes(await Star.find({ owner: req.user.id }).sort({ createdAt: -1 }).lean(), req.user.id) }); }
+  catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.get("/stars", auth, async (req, res) => {
-  try {
-    const uid = String(req.user.id);
-    const items = await Star.find({ owner: { $ne: req.user.id } }).sort({ createdAt: -1 }).limit(50).lean();
-    res.json({ items: items.map(s => ({ ...s, likesCount: s.likes||0, liked: (s.likedBy||[]).some(x=>String(x)===uid) })) });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
+  try { res.json({ items: withLikes(await Star.find({ owner: { $ne: req.user.id } }).sort({ createdAt: -1 }).limit(50).lean(), req.user.id) }); }
+  catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/stars", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     const title = san(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const created = await Star.create({ owner: req.user.id, title, images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4), likes: 0, likedBy: [] });
-    res.status(201).json({ item: created });
+    const c = await Star.create({ owner: req.user.id, title, images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4), likes: 0, likedBy: [] });
+    res.status(201).json({ item: c });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.delete("/stars/:id", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Star.findById(req.params.id);
-    if (!item) return res.status(404).json({ message: "Introuvable" });
-    if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
+    if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
     (item.images||[]).forEach(safeUnlink);
-    await Star.deleteOne({ _id: req.params.id });
+    await Promise.all([Star.deleteOne({_id:req.params.id}), Comment.deleteMany({targetType:"star",targetId:req.params.id})]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -532,36 +617,26 @@ app.delete("/stars/:id", auth, async (req, res) => {
 // ANNONCES
 //////////////////////////////////////////////////////
 app.get("/annonces/mine", auth, async (req, res) => {
-  try {
-    const uid = String(req.user.id);
-    const items = await Annonce.find({ owner: req.user.id }).sort({ createdAt: -1 }).lean();
-    res.json({ items: items.map(a => ({ ...a, likesCount: a.likedBy?.length || a.stars || 0, liked: (a.likedBy||[]).some(x=>String(x)===uid) })) });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
+  try { res.json({ items: withLikes(await Annonce.find({ owner: req.user.id }).sort({ createdAt: -1 }).lean(), req.user.id) }); }
+  catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.get("/annonces", auth, async (req, res) => {
-  try {
-    const uid = String(req.user.id);
-    const items = await Annonce.find({ owner: { $ne: req.user.id } }).sort({ createdAt: -1 }).limit(50).populate("owner","name avatar location").lean();
-    res.json({ items: items.map(a => ({ ...a, likesCount: a.likedBy?.length || a.stars || 0, liked: (a.likedBy||[]).some(x=>String(x)===uid) })) });
-  } catch (e) { res.status(500).json({ message: e?.message }); }
+  try { res.json({ items: withLikes(await Annonce.find({ owner: { $ne: req.user.id } }).sort({ createdAt: -1 }).limit(50).populate("owner","name avatar location").lean(), req.user.id) }); }
+  catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/annonces", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     const title = san(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const created = await Annonce.create({ owner: req.user.id, title, description: san(req.body?.description), location: san(req.body?.location), stars: 0, likedBy: [], status: String(req.body?.status||"active"), images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4) });
-    res.status(201).json({ item: created });
+    const c = await Annonce.create({ owner: req.user.id, title, description: san(req.body?.description), location: san(req.body?.location), stars: 0, likedBy: [], status: String(req.body?.status||"active"), images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4) });
+    res.status(201).json({ item: c });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.put("/annonces/:id", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Annonce.findById(req.params.id);
-    if (!item) return res.status(404).json({ message: "Introuvable" });
-    if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
+    if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
     const keep = parseKeep(req.body?.keepImages);
     (item.images||[]).filter(i=>!keep.includes(i)).forEach(safeUnlink);
     item.images = [...keep, ...(req.files||[]).map(f=>"/uploads/images/"+f.filename)].slice(0,4);
@@ -569,19 +644,16 @@ app.put("/annonces/:id", auth, uploadImage.array("images", 4), async (req, res) 
     if (req.body?.description!=null) item.description=san(req.body.description);
     if (req.body?.location!=null) item.location=san(req.body.location);
     if (req.body?.status!=null) item.status=String(req.body.status);
-    await item.save();
-    res.json({ item });
+    await item.save(); res.json({ item });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.delete("/annonces/:id", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Annonce.findById(req.params.id);
-    if (!item) return res.status(404).json({ message: "Introuvable" });
-    if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
+    if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
     (item.images||[]).forEach(safeUnlink);
-    await Annonce.deleteOne({ _id: req.params.id });
+    await Promise.all([Annonce.deleteOne({_id:req.params.id}), Comment.deleteMany({targetType:"annonce",targetId:req.params.id})]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -591,7 +663,6 @@ app.delete("/annonces/:id", auth, async (req, res) => {
 //////////////////////////////////////////////////////
 app.get("/besoins/mine", auth, async (req, res) => {
   try {
-    const uid = String(req.user.id);
     const ownerId = new mongoose.Types.ObjectId(req.user.id);
     const items = await Besoin.aggregate([
       { $match: { owner: ownerId } },
@@ -600,13 +671,11 @@ app.get("/besoins/mine", auth, async (req, res) => {
       { $project: { offers: 0 } },
       { $sort: { createdAt: -1 } },
     ]);
-    res.json({ items: items.map(b => ({ ...b, likesCount: b.likes||0, liked: (b.likedBy||[]).some(x=>String(x)===uid) })) });
+    res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.get("/besoins", auth, async (req, res) => {
   try {
-    const uid = String(req.user.id);
     const myId = new mongoose.Types.ObjectId(req.user.id);
     const items = await Besoin.aggregate([
       { $match: { owner: { $ne: myId } } },
@@ -620,25 +689,22 @@ app.get("/besoins", auth, async (req, res) => {
       { $addFields: { ownerPublic: { id: "$ownerUser._id", name: "$ownerUser.name", avatar: "$ownerUser.avatar", location: "$ownerUser.location" } } },
       { $project: { ownerUser: 0 } },
     ]);
-    res.json({ items: items.map(b => ({ ...b, likesCount: b.likes||0, liked: (b.likedBy||[]).some(x=>String(x)===uid) })) });
+    res.json({ items: withLikes(items, req.user.id) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/besoins", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     const title = san(req.body?.title);
     if (!title) return res.status(400).json({ message: "Titre obligatoire" });
-    const created = await Besoin.create({ owner: req.user.id, title, description: san(req.body?.description), category: san(req.body?.category||"general"), location: san(req.body?.location), priority: String(req.body?.priority||"medium"), status: String(req.body?.status||"open"), images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4), likes: 0, likedBy: [] });
-    res.status(201).json({ item: created });
+    const c = await Besoin.create({ owner: req.user.id, title, description: san(req.body?.description), category: san(req.body?.category||"general"), location: san(req.body?.location), priority: String(req.body?.priority||"medium"), status: String(req.body?.status||"open"), images: (req.files||[]).map(f=>"/uploads/images/"+f.filename).slice(0,4), likes: 0, likedBy: [] });
+    res.status(201).json({ item: c });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.put("/besoins/:id", auth, uploadImage.array("images", 4), async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Besoin.findById(req.params.id);
-    if (!item) return res.status(404).json({ message: "Introuvable" });
-    if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
+    if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
     const keep = parseKeep(req.body?.keepImages);
     (item.images||[]).filter(i=>!keep.includes(i)).forEach(safeUnlink);
     item.images = [...keep, ...(req.files||[]).map(f=>"/uploads/images/"+f.filename)].slice(0,4);
@@ -648,30 +714,24 @@ app.put("/besoins/:id", auth, uploadImage.array("images", 4), async (req, res) =
     if (req.body?.location!=null) item.location=san(req.body.location);
     if (req.body?.priority!=null) item.priority=String(req.body.priority);
     if (req.body?.status!=null) item.status=String(req.body.status);
-    await item.save();
-    res.json({ item });
+    await item.save(); res.json({ item });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/besoins/:id/close", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const b = await Besoin.findById(req.params.id);
-    if (!b) return res.status(404).json({ message: "Introuvable" });
-    if (String(b.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
-    b.status = "closed"; await b.save();
-    res.json({ ok: true, item: b });
+    if (!b||String(b.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
+    b.status = "closed"; await b.save(); res.json({ ok: true, item: b });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.delete("/besoins/:id", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
     const item = await Besoin.findById(req.params.id);
-    if (!item) return res.status(404).json({ message: "Introuvable" });
-    if (String(item.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
+    if (!item||String(item.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
     (item.images||[]).forEach(safeUnlink);
-    await Promise.all([Offer.deleteMany({ besoinId: req.params.id }), ChatMessage.deleteMany({ besoinId: req.params.id }), Favorite.deleteMany({ targetType: "besoin", targetId: req.params.id }), Besoin.deleteOne({ _id: req.params.id })]);
+    await Promise.all([Offer.deleteMany({besoinId:req.params.id}), ChatMessage.deleteMany({besoinId:req.params.id}), Favorite.deleteMany({targetType:"besoin",targetId:req.params.id}), Comment.deleteMany({targetType:"besoin",targetId:req.params.id}), Besoin.deleteOne({_id:req.params.id})]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
@@ -682,11 +742,9 @@ app.delete("/besoins/:id", auth, async (req, res) => {
 app.get("/besoins/:id/offers", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
-    if (!await Besoin.exists({ _id: req.params.id })) return res.status(404).json({ message: "Introuvable" });
     res.json({ items: await Offer.find({ besoinId: req.params.id }).sort({ createdAt: -1 }).lean() });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/besoins/:id/offers", auth, uploadImage.single("image"), async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
@@ -695,41 +753,36 @@ app.post("/besoins/:id/offers", auth, uploadImage.single("image"), async (req, r
     const besoin = await Besoin.findById(req.params.id).lean();
     if (!besoin) return res.status(404).json({ message: "Introuvable" });
     if (besoin.status !== "open") return res.status(400).json({ message: "Besoin non ouvert" });
-    if (String(besoin.owner) === String(req.user.id)) return res.status(400).json({ message: "Tu ne peux pas proposer sur ton propre besoin" });
-    const item = await Offer.create({ besoinId: req.params.id, author: req.user.id, authorName: req.user?.name||"Utilisateur", message, image: req.file ? "/uploads/images/"+req.file.filename : "", accepted: false });
+    if (String(besoin.owner)===String(req.user.id)) return res.status(400).json({ message: "Tu ne peux pas proposer sur ton propre besoin" });
+    const item = await Offer.create({ besoinId: req.params.id, author: req.user.id, authorName: req.user?.name||"Utilisateur", message, image: req.file?"/uploads/images/"+req.file.filename:"", accepted: false });
     await Notification.create({ to: besoin.owner, from: req.user.id, fromName: req.user?.name||"Utilisateur", type: "offer", targetId: besoin._id, targetTitle: besoin.title, message: `${req.user?.name||"Quelqu'un"} a proposé son aide` }).catch(()=>{});
     res.status(201).json({ item });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.delete("/offers/:offerId", auth, async (req, res) => {
   try {
     if (!isOid(req.params.offerId)) return res.status(400).json({ message: "ID invalide" });
-    const offer  = await Offer.findById(req.params.offerId).lean();
-    if (!offer)  return res.status(404).json({ message: "Introuvable" });
+    const offer = await Offer.findById(req.params.offerId).lean();
+    if (!offer) return res.status(404).json({ message: "Introuvable" });
     const besoin = await Besoin.findById(offer.besoinId).lean();
-    if (!besoin) return res.status(404).json({ message: "Introuvable" });
-    if (String(offer.author) !== String(req.user.id) && String(besoin.owner) !== String(req.user.id)) return res.status(403).json({ message: "Accès refusé" });
+    if (String(offer.author)!==String(req.user.id)&&(!besoin||String(besoin.owner)!==String(req.user.id))) return res.status(403).json({ message: "Refusé" });
     if (offer.accepted) return res.status(400).json({ message: "Offre déjà acceptée" });
     if (offer.image) safeUnlink(offer.image);
     await Offer.deleteOne({ _id: req.params.offerId });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/offers/:offerId/accept", auth, async (req, res) => {
   try {
     if (!isOid(req.params.offerId)) return res.status(400).json({ message: "ID invalide" });
-    const offer  = await Offer.findById(req.params.offerId).lean();
-    if (!offer)  return res.status(404).json({ message: "Introuvable" });
+    const offer = await Offer.findById(req.params.offerId).lean();
+    if (!offer) return res.status(404).json({ message: "Introuvable" });
     const besoin = await Besoin.findById(offer.besoinId);
-    if (!besoin) return res.status(404).json({ message: "Introuvable" });
-    if (String(besoin.owner) !== String(req.user.id)) return res.status(403).json({ message: "Seul le propriétaire peut accepter" });
-    if (besoin.status !== "open") return res.status(400).json({ message: "Besoin non ouvert" });
-    await Offer.updateMany({ besoinId: besoin._id }, { $set: { accepted: false } });
-    await Offer.updateOne({ _id: req.params.offerId }, { $set: { accepted: true } });
-    besoin.status = "closed"; besoin.acceptedOfferId = req.params.offerId;
-    await besoin.save();
+    if (!besoin||String(besoin.owner)!==String(req.user.id)) return res.status(403).json({ message: "Refusé" });
+    if (besoin.status!=="open") return res.status(400).json({ message: "Besoin non ouvert" });
+    await Offer.updateMany({besoinId:besoin._id},{$set:{accepted:false}});
+    await Offer.updateOne({_id:req.params.offerId},{$set:{accepted:true}});
+    besoin.status="closed"; besoin.acceptedOfferId=req.params.offerId; await besoin.save();
     await Notification.create({ to: offer.author, from: req.user.id, fromName: req.user?.name||"Utilisateur", type: "accepted", targetId: besoin._id, targetTitle: besoin.title, message: `${req.user?.name||"Quelqu'un"} a accepté votre offre` }).catch(()=>{});
     res.json({ ok: true, besoinId: String(besoin._id), offerId: req.params.offerId });
   } catch (e) { res.status(500).json({ message: e?.message }); }
@@ -759,36 +812,31 @@ app.get("/feed", auth, async (req, res) => {
       ]),
       Star.find({ owner: { $ne: myId } }).sort({ createdAt: -1 }).limit(limit).populate("owner","name avatar location").lean(),
     ]);
-    res.json({
-      annonces: annonces.map(a=>({ ...a, likesCount: a.likedBy?.length||a.stars||0, liked: (a.likedBy||[]).some(x=>String(x)===uid) })),
-      besoins:  besoins.map(b=>({ ...b,  likesCount: b.likes||0,               liked: (b.likedBy||[]).some(x=>String(x)===uid) })),
-      stars:    stars.map(s=>({ ...s,   likesCount: s.likes||0,               liked: (s.likedBy||[]).some(x=>String(x)===uid) })),
-    });
+    res.json({ annonces: withLikes(annonces,uid), besoins: withLikes(besoins,uid), stars: withLikes(stars,uid) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
 //////////////////////////////////////////////////////
 // CHAT
 //////////////////////////////////////////////////////
-app.get("/chat/:besoinId/messages", auth, rateLimit({ windowMs: 10_000, max: 20 }), async (req, res) => {
+app.get("/chat/:besoinId/messages", auth, rateLimit({ windowMs:10_000, max:20 }), async (req, res) => {
   try {
     if (!isOid(req.params.besoinId)) return res.status(400).json({ message: "ID invalide" });
     const access = await canAccess(req.user.id, req.params.besoinId);
     if (!access.ok) return res.status(403).json({ message: access.reason });
     const q = { besoinId: req.params.besoinId };
-    const offerId = req.query.offerId;
-    if (offerId && isOid(offerId)) {
-      const offer = await Offer.findById(offerId).lean();
-      if (!offer || String(offer.besoinId) !== String(req.params.besoinId)) return res.status(404).json({ message: "Offre introuvable" });
+    const oid = req.query.offerId;
+    if (oid && isOid(oid)) {
+      const offer = await Offer.findById(oid).lean();
+      if (!offer||String(offer.besoinId)!==String(req.params.besoinId)) return res.status(404).json({ message: "Offre introuvable" });
       const io = String(access.besoin.owner)===String(req.user.id), ia = String(offer.author)===String(req.user.id);
-      if (!io && !ia) return res.status(403).json({ message: "Accès refusé" });
-      q.offerId = offerId;
+      if (!io&&!ia) return res.status(403).json({ message: "Refusé" });
+      q.offerId = oid;
     }
     res.json({ items: await ChatMessage.find(q).sort({ createdAt: 1 }).limit(300).lean() });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
-app.post("/chat/:besoinId/messages", auth, rateLimit({ windowMs: 10_000, max: 12 }), async (req, res) => {
+app.post("/chat/:besoinId/messages", auth, rateLimit({ windowMs:10_000, max:12 }), async (req, res) => {
   try {
     if (!isOid(req.params.besoinId)) return res.status(400).json({ message: "ID invalide" });
     const access = await canAccess(req.user.id, req.params.besoinId);
@@ -799,9 +847,9 @@ app.post("/chat/:besoinId/messages", auth, rateLimit({ windowMs: 10_000, max: 12
     const raw = req.body?.offerId;
     if (isOid(raw)) {
       const offer = await Offer.findById(raw).lean();
-      if (!offer || String(offer.besoinId) !== String(req.params.besoinId)) return res.status(404).json({ message: "Offre introuvable" });
+      if (!offer||String(offer.besoinId)!==String(req.params.besoinId)) return res.status(404).json({ message: "Offre introuvable" });
       const io = String(access.besoin.owner)===String(req.user.id), ia = String(offer.author)===String(req.user.id);
-      if (!io && !ia) return res.status(403).json({ message: "Accès refusé" });
+      if (!io&&!ia) return res.status(403).json({ message: "Refusé" });
       offerId = raw;
       const to = io ? offer.author : access.besoin.owner;
       await Notification.create({ to, from: req.user.id, fromName: req.user?.name||"Utilisateur", type: "message", targetId: new mongoose.Types.ObjectId(req.params.besoinId), targetTitle: access.besoin.title||"", message: `${req.user?.name||"Quelqu'un"} vous a envoyé un message` }).catch(()=>{});
@@ -817,30 +865,27 @@ app.post("/chat/:besoinId/messages", auth, rateLimit({ windowMs: 10_000, max: 12
 app.get("/favorites/mine", auth, async (req, res) => {
   try {
     const favs = await Favorite.find({ owner: req.user.id }).sort({ createdAt: -1 }).lean();
-    const bids = favs.filter(f=>f.targetType==="besoin").map(f=>f.targetId);
-    const aids = favs.filter(f=>f.targetType==="annonce").map(f=>f.targetId);
-    const sids = favs.filter(f=>f.targetType==="star").map(f=>f.targetId);
-    const [B,A,S] = await Promise.all([Besoin.find({_id:{$in:bids}}).lean(), Annonce.find({_id:{$in:aids}}).lean(), Star.find({_id:{$in:sids}}).lean()]);
-    const mB=new Map(B.map(x=>[String(x._id),x])), mA=new Map(A.map(x=>[String(x._id),x])), mS=new Map(S.map(x=>[String(x._id),x]));
+    const bids=favs.filter(f=>f.targetType==="besoin").map(f=>f.targetId);
+    const aids=favs.filter(f=>f.targetType==="annonce").map(f=>f.targetId);
+    const sids=favs.filter(f=>f.targetType==="star").map(f=>f.targetId);
+    const [B,A,S]=await Promise.all([Besoin.find({_id:{$in:bids}}).lean(),Annonce.find({_id:{$in:aids}}).lean(),Star.find({_id:{$in:sids}}).lean()]);
+    const mB=new Map(B.map(x=>[String(x._id),x])),mA=new Map(A.map(x=>[String(x._id),x])),mS=new Map(S.map(x=>[String(x._id),x]));
     res.json({ items: favs.map(f=>{ const d=f.targetType==="besoin"?mB.get(String(f.targetId)):f.targetType==="annonce"?mA.get(String(f.targetId)):mS.get(String(f.targetId)); return d?{...f,item:d}:null; }).filter(Boolean) });
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.post("/favorites/toggle", auth, async (req, res) => {
   try {
-    const tt = san(req.body?.targetType||"");
-    const ti = san(req.body?.targetId  ||"");
+    const tt=san(req.body?.targetType||""), ti=san(req.body?.targetId||"");
     if (!["besoin","annonce","star"].includes(tt)) return res.status(400).json({ message: "Type invalide" });
     if (!isOid(ti)) return res.status(400).json({ message: "ID invalide" });
-    const ex = tt==="besoin"?await Besoin.exists({_id:ti}):tt==="annonce"?await Annonce.exists({_id:ti}):await Star.exists({_id:ti});
+    const ex=tt==="besoin"?await Besoin.exists({_id:ti}):tt==="annonce"?await Annonce.exists({_id:ti}):await Star.exists({_id:ti});
     if (!ex) return res.status(404).json({ message: "Introuvable" });
-    const q = { owner: req.user.id, targetType: tt, targetId: ti };
-    const found = await Favorite.findOne(q).lean();
-    if (found) { await Favorite.deleteOne({ _id: found._id }); return res.json({ ok: true, favorited: false }); }
-    await Favorite.create(q);
-    res.json({ ok: true, favorited: true });
+    const q={owner:req.user.id,targetType:tt,targetId:ti};
+    const found=await Favorite.findOne(q).lean();
+    if (found) { await Favorite.deleteOne({_id:found._id}); return res.json({ok:true,favorited:false}); }
+    await Favorite.create(q); res.json({ok:true,favorited:true});
   } catch (e) {
-    if (String(e?.message||"").includes("E11000")) return res.json({ ok: true, favorited: true });
+    if (String(e?.message||"").includes("E11000")) return res.json({ok:true,favorited:true});
     res.status(500).json({ message: e?.message });
   }
 });
@@ -852,17 +897,14 @@ app.get("/notifications/mine", auth, async (req, res) => {
   try { res.json({ items: await Notification.find({ to: req.user.id }).sort({ createdAt: -1 }).limit(50).lean() }); }
   catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.get("/notifications/unread-count", auth, async (req, res) => {
   try { res.json({ count: await Notification.countDocuments({ to: req.user.id, read: false }) }); }
   catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.put("/notifications/read-all", auth, async (req, res) => {
   try { await Notification.updateMany({ to: req.user.id, read: false }, { $set: { read: true } }); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ message: e?.message }); }
 });
-
 app.put("/notifications/:id/read", auth, async (req, res) => {
   try {
     if (!isOid(req.params.id)) return res.status(400).json({ message: "ID invalide" });
@@ -871,7 +913,4 @@ app.put("/notifications/:id/read", auth, async (req, res) => {
   } catch (e) { res.status(500).json({ message: e?.message }); }
 });
 
-//////////////////////////////////////////////////////
-// START
-//////////////////////////////////////////////////////
-app.listen(PORT, "127.0.0.1", () => console.log("✅ Backend http://127.0.0.1:" + PORT));
+app.listen(PORT, "0.0.0.0", () => console.log("✅ Backend http://0.0.0.0:" + PORT));
