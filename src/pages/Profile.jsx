@@ -155,9 +155,10 @@ export default function Profile() {
 
   const avatarUrl = useMemo(() => {
     if (!user?.avatar) return "";
-    const cleanAvatar = user.avatar.split("?")[0];
-    const ts = user.avatar.includes("?t=") ? user.avatar.split("?t=")[1] : "";
-    return `${API_BASE}${cleanAvatar}${ts ? "?t=" + ts : ""}`;
+    // ✅ URL Cloudinary (absolue) — on l'utilise directement
+    if (user.avatar.startsWith("http")) return user.avatar;
+    // Ancienne URL locale
+    return `${API_BASE}${user.avatar}`;
   }, [user?.avatar]);
 
   const currentUserId = user?.id;
@@ -506,7 +507,7 @@ export default function Profile() {
 }
 
 function StarCard({ item, onDelete, t }) {
-  const images = (item.images || []).filter(Boolean).map((p) => `${API_BASE}${p}`);
+  const images = (item.images || []).filter(Boolean).map((p) => p.startsWith("http") ? p : `${API_BASE}${p}`);
   return (
     <div className="item-card" style={{ display: "block" }}>
       {images.length > 0 && <div style={{ marginBottom: 10 }}><Gallery images={images} alt={item.title} /></div>}
@@ -517,7 +518,7 @@ function StarCard({ item, onDelete, t }) {
 }
 
 function AnnonceCard({ item, t }) {
-  const images = (item.images || []).filter(Boolean).map((p) => `${API_BASE}${p}`);
+  const images = (item.images || []).filter(Boolean).map((p) => p.startsWith("http") ? p : `${API_BASE}${p}`);
   return (
     <div className="item-card" style={{ display: "block" }}>
       {images.length > 0 && <div style={{ marginBottom: 10 }}><Gallery images={images} alt={item.title} /></div>}
