@@ -1,4 +1,4 @@
-// src/pages/Profile.jsx (COMPLET + suppression de compte)
+// src/pages/Profile.jsx (COMPLET + suppression de compte + delete annonces/besoins)
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "../components/SideBar.jsx";
@@ -47,7 +47,7 @@ export default function Profile() {
   const [pfSaving, setPfSaving] = useState(false);
   const [pfError, setPfError] = useState("");
 
-  // ✅ Suppression de compte
+  // Suppression de compte
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -84,7 +84,6 @@ export default function Profile() {
     }
   };
 
-  // ✅ Supprimer le compte
   const handleDeleteAccount = async () => {
     setDeleteError("");
     if (!deletePassword) { setDeleteError("Saisis ton mot de passe pour confirmer."); return; }
@@ -142,6 +141,26 @@ export default function Profile() {
     } catch (e) { setError(e?.message || String(e)); }
   };
 
+  // ✅ Supprimer annonce
+  const deleteAnnonce = async (id) => {
+    if (!id || !confirm(t("confirm_delete"))) return;
+    try {
+      setError("");
+      await apiSend(`/annonces/${id}`, "DELETE", token, null);
+      setAnnonces((prev) => prev.filter((a) => a._id !== id));
+    } catch (e) { setError(e?.message || String(e)); }
+  };
+
+  // ✅ Supprimer besoin
+  const deleteBesoin = async (id) => {
+    if (!id || !confirm(t("confirm_delete"))) return;
+    try {
+      setError("");
+      await apiSend(`/besoins/${id}`, "DELETE", token, null);
+      setBesoins((prev) => prev.filter((b) => b._id !== id));
+    } catch (e) { setError(e?.message || String(e)); }
+  };
+
   const [newAnnonceTitle, setNewAnnonceTitle] = useState("");
   const [newBesoinTitle, setNewBesoinTitle] = useState("");
   const [annonceImages, setAnnonceImages] = useState([]);
@@ -155,9 +174,7 @@ export default function Profile() {
 
   const avatarUrl = useMemo(() => {
     if (!user?.avatar) return "";
-    // ✅ URL Cloudinary (absolue) — on l'utilise directement
     if (user.avatar.startsWith("http")) return user.avatar;
-    // Ancienne URL locale
     return `${API_BASE}${user.avatar}`;
   }, [user?.avatar]);
 
@@ -273,7 +290,7 @@ export default function Profile() {
       const res = await fetch(`${API_BASE}/users/avatar`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || `Erreur upload (${res.status})`);
-      updateUser({ avatar: data.avatar + "?t=" + Date.now() });
+      updateUser({ avatar: data.avatar });
       setAvatarFile(null); setAvatarPreview(""); setShowAvatarAction(false);
     } catch (e) {
       setError(e?.message || String(e));
@@ -347,7 +364,8 @@ export default function Profile() {
                 <button className="btn-primary" type="button" onClick={createAnnonce}>{t("add")}</button>
               </div>
               <MultiImageUploader images={annonceImages} setImages={setAnnonceImages} />
-              <div className="card-list">{annonces.map((x) => <AnnonceCard key={x._id} item={x} t={t} />)}</div>
+              {/* ✅ onDelete passé à AnnonceCard */}
+              <div className="card-list">{annonces.map((x) => <AnnonceCard key={x._id} item={x} t={t} onDelete={() => deleteAnnonce(x._id)} />)}</div>
               {annonces.length === 0 && <div className="empty">{t("empty_annonces")}</div>}
             </div>
           ) : tab === "stars" ? (
@@ -373,7 +391,8 @@ export default function Profile() {
               </div>
               <div className="panel" style={{ marginTop: 14 }}>
                 <div className="panel-title">{t("my_besoins")}</div>
-                <BesoinsList besoins={besoins} onPropose={openOfferModal} currentUserId={currentUserId} token={token} />
+                {/* ✅ onDelete passé à BesoinsList */}
+                <BesoinsList besoins={besoins} onPropose={openOfferModal} onDelete={deleteBesoin} currentUserId={currentUserId} token={token} />
               </div>
               <div className="panel" style={{ marginTop: 14 }}>
                 <div className="panel-title">{t("others_besoins")}</div>
@@ -406,7 +425,7 @@ export default function Profile() {
 
         <ChatModal open={chatOpen} onClose={closeChat} besoin={chatBesoin} offer={chatOffer} token={token} apiGet={apiGet} apiSend={apiSend} />
 
-        {/* ✅ MODALE SUPPRESSION DE COMPTE */}
+        {/* MODALE SUPPRESSION DE COMPTE */}
         {deleteOpen && (
           <div className="modal-backdrop" onMouseDown={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }}>
             <div className="modal-card" onMouseDown={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
@@ -417,32 +436,16 @@ export default function Profile() {
                 </div>
                 <button className="btn-ghost" type="button" onClick={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }}>✕</button>
               </div>
-
               <div style={{ margin: "16px 0", padding: "14px", borderRadius: 14, background: "rgba(255,80,80,0.08)", border: "1px solid rgba(255,80,80,0.25)", fontSize: 13 }}>
                 ⚠️ Seront supprimés définitivement : ton profil, tes annonces, tes besoins, tes étoiles, tes favoris et tes notifications.
               </div>
-
               {deleteError && <div className="modal-error">{deleteError}</div>}
-
               <label className="modal-label">Confirme avec ton mot de passe</label>
-              <input
-                type="password"
-                placeholder="Ton mot de passe actuel"
-                value={deletePassword}
-                onChange={(e) => setDeletePassword(e.target.value)}
-                style={{ ...inputStyle, width: "100%", marginTop: 8 }}
-              />
-
+              <input type="password" placeholder="Ton mot de passe actuel" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <div className="modal-actions">
-                <button className="btn-ghost" type="button" onClick={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }} disabled={deleteLoading}>
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDeleteAccount}
-                  disabled={deleteLoading || !deletePassword}
-                  style={{ background: "linear-gradient(90deg, #ff4d6d, #c9184a)", border: "none", borderRadius: 999, padding: "10px 16px", color: "white", fontWeight: 800, cursor: "pointer", fontSize: 13, opacity: deleteLoading || !deletePassword ? 0.5 : 1 }}
-                >
+                <button className="btn-ghost" type="button" onClick={() => { setDeleteOpen(false); setDeletePassword(""); setDeleteError(""); }} disabled={deleteLoading}>Annuler</button>
+                <button type="button" onClick={handleDeleteAccount} disabled={deleteLoading || !deletePassword}
+                  style={{ background: "linear-gradient(90deg, #ff4d6d, #c9184a)", border: "none", borderRadius: 999, padding: "10px 16px", color: "white", fontWeight: 800, cursor: "pointer", fontSize: 13, opacity: deleteLoading || !deletePassword ? 0.5 : 1 }}>
                   {deleteLoading ? "Suppression…" : "🗑️ Supprimer définitivement"}
                 </button>
               </div>
@@ -471,29 +474,13 @@ export default function Profile() {
               <input value={pfTopSkills} onChange={(e) => setPfTopSkills(e.target.value)} placeholder="Ex: React, Organisation, Communication" style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
               <label className="modal-label" style={{ marginTop: 12 }}>{t("summary")}</label>
               <textarea value={pfSummary} onChange={(e) => setPfSummary(e.target.value)} placeholder={t("summary_text")} style={{ ...inputStyle, width: "100%", marginTop: 8, minHeight: 110, resize: "vertical" }} />
-
-              {/* ✅ Zone suppression de compte */}
               <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,80,80,0.2)" }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "rgba(255,120,120,0.9)", marginBottom: 8 }}>
-                  Zone de danger
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setEditProfileOpen(false); setDeleteOpen(true); }}
-                  style={{
-                    width: "100%", padding: "10px 14px",
-                    borderRadius: 14, cursor: "pointer",
-                    background: "rgba(255,80,80,0.08)",
-                    border: "1px solid rgba(255,80,80,0.3)",
-                    color: "rgba(255,120,120,0.9)",
-                    fontWeight: 800, fontSize: 13,
-                    textAlign: "left",
-                  }}
-                >
+                <div style={{ fontSize: 13, fontWeight: 800, color: "rgba(255,120,120,0.9)", marginBottom: 8 }}>Zone de danger</div>
+                <button type="button" onClick={() => { setEditProfileOpen(false); setDeleteOpen(true); }}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: 14, cursor: "pointer", background: "rgba(255,80,80,0.08)", border: "1px solid rgba(255,80,80,0.3)", color: "rgba(255,120,120,0.9)", fontWeight: 800, fontSize: 13, textAlign: "left" }}>
                   🗑️ Supprimer mon compte définitivement
                 </button>
               </div>
-
               <div className="modal-actions">
                 <button className="btn-ghost" type="button" onClick={() => setEditProfileOpen(false)} disabled={pfSaving}>{t("cancel")}</button>
                 <button className="btn-primary" type="button" onClick={saveProfile} disabled={pfSaving}>{pfSaving ? t("saving") : t("save")}</button>
@@ -507,24 +494,34 @@ export default function Profile() {
 }
 
 function StarCard({ item, onDelete, t }) {
-  const images = (item.images || []).filter(Boolean).map((p) => p.startsWith("http") ? p : `${API_BASE}${p}`);
+  const images = (item.images || []).filter(Boolean).map((p) =>
+    p.startsWith("http") ? p : `${API_BASE}${p}`
+  );
   return (
     <div className="item-card" style={{ display: "block" }}>
       {images.length > 0 && <div style={{ marginBottom: 10 }}><Gallery images={images} alt={item.title} /></div>}
       <div className="item-title">{item.title}</div>
-      <div style={{ marginTop: 10 }}><button className="btn-ghost" type="button" onClick={onDelete}>{t("delete")}</button></div>
+      <div style={{ marginTop: 10 }}>
+        <button className="btn-ghost" type="button" onClick={onDelete}>{t("delete")}</button>
+      </div>
     </div>
   );
 }
 
-function AnnonceCard({ item, t }) {
-  const images = (item.images || []).filter(Boolean).map((p) => p.startsWith("http") ? p : `${API_BASE}${p}`);
+// ✅ AnnonceCard avec bouton supprimer
+function AnnonceCard({ item, onDelete, t }) {
+  const images = (item.images || []).filter(Boolean).map((p) =>
+    p.startsWith("http") ? p : `${API_BASE}${p}`
+  );
   return (
     <div className="item-card" style={{ display: "block" }}>
       {images.length > 0 && <div style={{ marginBottom: 10 }}><Gallery images={images} alt={item.title} /></div>}
       <div className="item-title">{item.title}</div>
       <div className="item-meta" style={{ marginTop: 6, opacity: 0.75 }}>
         {`${item.location || "—"} • ${formatDate(item.createdAt)} • ⭐ ${item.stars ?? 0}`}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <button className="btn-ghost" type="button" onClick={onDelete}>{t("delete")}</button>
       </div>
     </div>
   );
